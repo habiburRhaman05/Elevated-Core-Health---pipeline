@@ -25,11 +25,11 @@
   --color-ring: var(--ring);
   --radius: 0.75rem;
 
-  --color-ech-dark: #036638;
-  --color-ech-green: #65BD6C;
-  --color-ech-light: #EBF7EC;
+  --color-ech-dark: #E8792E;
+  --color-ech-amber: #F2994A;
+  --color-ech-light: #FFF0E5;
   --color-ech-cream: #FBE7B2;
-  --color-ech-sand: #EADEC0;
+  --color-ech-sand: #E5E7EB;
   --color-ech-sidebar: #16181C;
   --color-ech-accent: #E8792E;
 
@@ -48,11 +48,11 @@
   --popover: #ffffff;
   --popover-foreground: #0f0f0f;
 
-  --primary: #036638;
+  --primary: #E8792E;
   --primary-foreground: #ffffff;
 
-  --secondary: #EBF7EC;
-  --secondary-foreground: #036638;
+  --secondary: #FFF0E5;
+  --secondary-foreground: #E8792E;
 
   --muted: #f4f4f5;
   --muted-foreground: #71717a;
@@ -65,7 +65,7 @@
 
   --border: #e4e4e7;
   --input: #e4e4e7;
-  --ring: #036638;
+  --ring: #E8792E;
 }
 
 @layer base {

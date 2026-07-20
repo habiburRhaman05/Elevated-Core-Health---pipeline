@@ -2,7 +2,7 @@ import Link from "next/link"
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-br from-[#036638] via-[#036638] to-[#024d2b] relative overflow-hidden">
+    <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-gradient-to-br from-[#E8792E] via-[#E8792E] to-[#024d2b] relative overflow-hidden">
       <div className="absolute inset-0 opacity-[0.04]"
         style={{
           backgroundImage: `radial-gradient(circle at 25% 25%, white 1px, transparent 1px)`,
@@ -16,18 +16,18 @@ export default function Home() {
         <h1 className="text-3xl font-bold text-white mb-3">
           Patient Pipeline Portal
         </h1>
-        <p className="text-[#65BD6C] text-sm leading-relaxed mb-8">
+        <p className="text-[#F2994A] text-sm leading-relaxed mb-8">
           Track patients through every stage of the administrative workflow — from onboarding to reconciliation.
         </p>
         <div className="flex gap-3 justify-center">
           <Link
             href="/login"
-            className="inline-flex items-center h-10 px-6 rounded-lg bg-white text-[#036638] font-semibold text-sm hover:bg-[#EBF7EC] transition-colors shadow-lg"
+            className="inline-flex items-center h-10 px-6 rounded-lg bg-white text-[#E8792E] font-semibold text-sm hover:bg-[#FFF0E5] transition-colors shadow-lg"
           >
             Sign In
           </Link>
         </div>
-        <p className="text-[#65BD6C]/60 text-[10px] mt-8">
+        <p className="text-[#F2994A]/60 text-[10px] mt-8">
           Elevated Core Health &middot; Internal Operations Portal
         </p>
       </div>

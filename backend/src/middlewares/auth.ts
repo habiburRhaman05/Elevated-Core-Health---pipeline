@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 
-import { type UserRole } from "@/config/roles";
+import type { UserRole } from "@/config/roles";
 import { verifyAccessToken } from "@/lib/auth";
 import { AppError } from "@/utils/appError";
 import { handleServiceResponse } from "@/utils/httpHandlers";

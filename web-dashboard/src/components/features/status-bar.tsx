@@ -9,8 +9,8 @@ export function StatusBar() {
 
   if (isLoading) {
     return (
-      <div className="h-9 bg-[#EBF7EC] border-b border-[#65BD6C]/20 flex items-center px-6 gap-3">
-        <div className="h-2 w-20 bg-[#65BD6C]/20 rounded animate-pulse" />
+      <div className="h-9 bg-[#FFF0E5] border-b border-[#F2994A]/20 flex items-center px-6 gap-3">
+        <div className="h-2 w-20 bg-[#F2994A]/20 rounded animate-pulse" />
       </div>
     )
   }
@@ -34,7 +34,7 @@ export function StatusBar() {
         "h-9 border-b flex items-center px-6 gap-4 text-[11px] font-medium",
         hasIssues
           ? "bg-[#FEFCE8] border-[#FBE7B2]"
-          : "bg-[#EBF7EC] border-[#65BD6C]/20",
+          : "bg-[#FFF0E5] border-[#F2994A]/20",
       )}
     >
       {hasIssues ? (
@@ -53,7 +53,7 @@ export function StatusBar() {
           )}
         </>
       ) : (
-        <span className="flex items-center gap-1.5 text-[#036638]">
+        <span className="flex items-center gap-1.5 text-[#E8792E]">
           <CheckCircle2 className="w-3.5 h-3.5" />
           All caught up
         </span>

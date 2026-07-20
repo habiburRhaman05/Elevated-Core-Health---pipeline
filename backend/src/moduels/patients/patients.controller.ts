@@ -89,6 +89,11 @@ export const patientsController = {
 		handleServiceResponse(serviceResponse, res);
 	},
 
+	async listChecklistItems(_req: Request, res: Response): Promise<void> {
+		const serviceResponse = await patientsService.listChecklistItems();
+		handleServiceResponse(serviceResponse, res);
+	},
+
 	async intake(req: Request, res: Response): Promise<void> {
 		const serviceResponse = await patientsService.intake(req.body);
 		handleServiceResponse(serviceResponse, res);

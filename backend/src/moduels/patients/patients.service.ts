@@ -74,13 +74,21 @@ export const patientsService = {
 		const curIdx = STAGE_ORDER.indexOf(patient.stage as Stage);
 		const tgtIdx = STAGE_ORDER.indexOf(input.targetStage as Stage);
 
+		if (tgtIdx - curIdx > 1) {
+			return ServiceResponse.failure(
+				"Cannot skip stages. Move forward one stage at a time.",
+				null,
+				StatusCodes.BAD_REQUEST,
+			);
+		}
+
 		if (tgtIdx > curIdx) {
 			const allState = (patient.checklistState ?? {}) as Record<string, Record<string, boolean>>;
 			const stageState = allState[patient.stage] ?? {};
 			const complete = await isChecklistComplete(patient.stage, stageState);
 			if (!complete) {
 				return ServiceResponse.failure(
-					"Cannot advance: complete all checklist items for the current stage first.",
+					"Please complete all checklist items before moving to the next stage.",
 					null,
 					StatusCodes.BAD_REQUEST,
 				);
@@ -92,12 +100,7 @@ export const patientsService = {
 			data: { stage: input.targetStage as Stage, updatedAt: new Date(), updatedById: user.id },
 		});
 
-		await logActivity(
-			id,
-			user.name,
-			`Moved from ${patient.stage} to ${input.targetStage}`,
-			"auto",
-		);
+		await logActivity(id, user.name, `Moved from ${patient.stage} to ${input.targetStage}`, "auto");
 
 		return ServiceResponse.success("Stage updated.", updated);
 	},
@@ -132,10 +135,16 @@ export const patientsService = {
 		}
 		state[currentStage][input.itemId] = input.checked;
 
+		const item = await prisma.checklistItem.findUnique({ where: { id: input.itemId } });
+
 		const updated = await prisma.patient.update({
 			where: { id },
 			data: { checklistState: state, updatedAt: new Date(), updatedById: user.id },
 		});
+
+		const action = input.checked ? "checked" : "unchecked";
+		const label = item?.label ?? input.itemId;
+		await logActivity(id, user.name, `Checklist item "${label}" ${action}`, "auto");
 
 		return ServiceResponse.success("Checklist updated.", updated);
 	},
@@ -248,10 +257,16 @@ export const patientsService = {
 		return ServiceResponse.success("Patient claimed.", updated);
 	},
 
+	async listChecklistItems() {
+		const items = await prisma.checklistItem.findMany({
+			orderBy: [{ stage: "asc" as never }, { sortOrder: "asc" }],
+			select: { id: true, stage: true, label: true, description: true, isDefault: true, sortOrder: true },
+		});
+		return ServiceResponse.success("Checklist items retrieved.", items);
+	},
+
 	async intake(input: IntakeInput) {
-		const appointmentDatetime = input.appointmentDatetime
-			? new Date(input.appointmentDatetime)
-			: null;
+		const appointmentDatetime = input.appointmentDatetime ? new Date(input.appointmentDatetime) : null;
 
 		const patient = await prisma.patient.create({
 			data: {
@@ -281,10 +296,12 @@ export const patientsService = {
 		const jude = vas.find((v) => v.name.toLowerCase() === "jude");
 		const amanda = vas.find((v) => v.name.toLowerCase() === "amanda");
 		if (jude && amanda) {
-			emailService.notifyNewPatient(patient.name, patient.id, {
-				jude: jude.email,
-				amanda: amanda.email,
-			}).catch(() => {});
+			emailService
+				.notifyNewPatient(patient.name, patient.id, {
+					jude: jude.email,
+					amanda: amanda.email,
+				})
+				.catch(() => {});
 		}
 
 		return ServiceResponse.success("Patient created from webhook intake.", patient, StatusCodes.CREATED);

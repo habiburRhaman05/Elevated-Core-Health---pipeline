@@ -5,17 +5,22 @@ export const ROLES = {
 
 export const ROUTES = {
   LOGIN: "/login",
-  VA: {
-    HOME: "/va",
-    BOARD: "/va/board",
-    LOG: "/va/log",
-    SOP: "/va/sop",
+  FORGOT_PASSWORD: "/forgot-password",
+  RESET_PASSWORD: "/reset-password",
+  DASHBOARD: {
+    HOME: "/dashboard",
+    BOARD: "/dashboard/board",
+    LOG: "/dashboard/log",
+    SOP: "/dashboard/sop",
+    PROFILE: "/dashboard/profile",
   },
   ADMIN: {
-    HOME: "/admin",
-    USERS: "/admin/users",
-    CHECKLIST: "/admin/checklist",
-    BOARD: "/admin/board",
+    HOME: "/admin/dashboard",
+    BOARD: "/admin/dashboard/board",
+    LOG: "/admin/dashboard/log",
+    USERS: "/admin/dashboard/users",
+    CHECKLIST: "/admin/dashboard/checklist",
+    PROFILE: "/admin/dashboard/profile",
   },
 }
 
@@ -25,6 +30,10 @@ export const API_ENDPOINTS = {
     REFRESH: "/auth/refresh",
     ME: "/auth/me",
     LOGOUT: "/auth/logout",
+    PROFILE: "/auth/profile",
+    CHANGE_PASSWORD: "/auth/change-password",
+    FORGOT_PASSWORD: "/auth/forgot-password",
+    RESET_PASSWORD: "/auth/reset-password",
   },
   PATIENTS: "/patients",
   PATIENTS_INTAKE: "/patients/intake",

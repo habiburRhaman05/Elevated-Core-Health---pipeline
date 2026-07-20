@@ -38,9 +38,9 @@ export function useAuth() {
         dispatch(setUser(data.user))
 
         if (data.user.role === "admin") {
-          router.push("/admin")
+          router.push("/admin/dashboard")
         } else {
-          router.push("/va")
+          router.push("/dashboard")
         }
       } finally {
         dispatch(setLoading(false))

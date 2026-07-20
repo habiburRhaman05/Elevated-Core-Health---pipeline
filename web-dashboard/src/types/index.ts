@@ -21,6 +21,7 @@ export interface User {
 export interface ChecklistItemDef {
   id: string
   label: string
+  description?: string | null
   isDefault: boolean
   sortOrder: number
   stage: PatientStage

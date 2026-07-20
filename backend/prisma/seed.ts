@@ -8,10 +8,30 @@ const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 const CHECKLIST_SEEDS = [
-	{ stage: "post_visit_docs" as const, label: "Patient instruction letter sent", sortOrder: 1 },
-	{ stage: "post_visit_docs" as const, label: "Labs sent", sortOrder: 2 },
-	{ stage: "chart_signed" as const, label: "Optimantra note signed", sortOrder: 1 },
-	{ stage: "chart_signed" as const, label: "Clawback check passed (CPT / ICD-10)", sortOrder: 2 },
+	{
+		stage: "post_visit_docs" as const,
+		label: "Patient instruction letter sent",
+		description: "Ensure the post-visit summary and recommendations are sent to the patient",
+		sortOrder: 1,
+	},
+	{
+		stage: "post_visit_docs" as const,
+		label: "Labs sent",
+		description: "Confirm lab orders have been submitted and results are pending",
+		sortOrder: 2,
+	},
+	{
+		stage: "chart_signed" as const,
+		label: "Optimantra note signed",
+		description: "Verify the clinical note is finalized and signed in Optimantra",
+		sortOrder: 1,
+	},
+	{
+		stage: "chart_signed" as const,
+		label: "Clawback check passed (CPT / ICD-10)",
+		description: "Confirm CPT code level, ICD-10 alignment, and documentation support the billed amount",
+		sortOrder: 2,
+	},
 ];
 
 async function main() {
@@ -69,6 +89,7 @@ async function main() {
 				create: {
 					stage: item.stage,
 					label: item.label,
+					description: item.description,
 					isDefault: true,
 					sortOrder: item.sortOrder,
 				},

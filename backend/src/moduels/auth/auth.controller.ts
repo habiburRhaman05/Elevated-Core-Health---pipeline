@@ -25,6 +25,36 @@ export const authController = {
 		handleServiceResponse(serviceResponse, res);
 	},
 
+	async updateProfile(req: Request, res: Response): Promise<void> {
+		const userId = req.user?.id;
+		if (!userId) {
+			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, 401), res);
+			return;
+		}
+		const serviceResponse = await authService.updateProfile(userId, req.body);
+		handleServiceResponse(serviceResponse, res);
+	},
+
+	async changePassword(req: Request, res: Response): Promise<void> {
+		const userId = req.user?.id;
+		if (!userId) {
+			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, 401), res);
+			return;
+		}
+		const serviceResponse = await authService.changePassword(userId, req.body);
+		handleServiceResponse(serviceResponse, res);
+	},
+
+	async forgotPassword(req: Request, res: Response): Promise<void> {
+		const serviceResponse = await authService.forgotPassword(req.body);
+		handleServiceResponse(serviceResponse, res);
+	},
+
+	async resetPassword(req: Request, res: Response): Promise<void> {
+		const serviceResponse = await authService.resetPassword(req.body);
+		handleServiceResponse(serviceResponse, res);
+	},
+
 	async logout(req: Request, res: Response): Promise<void> {
 		const refreshToken = req.body?.refreshToken;
 		if (!refreshToken) {

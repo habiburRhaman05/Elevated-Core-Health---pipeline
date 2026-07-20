@@ -10,6 +10,9 @@ interface PatientCardProps {
   patient: Patient
   onMoveStage: (id: string, target: PatientStage) => void
   onClick: (patient: Patient) => void
+  isDragging?: boolean
+  onDragStart?: (e: React.DragEvent) => void
+  onDragEnd?: (e: React.DragEvent) => void
 }
 
 function isStale(updatedAt: string): boolean {
@@ -28,7 +31,7 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`
 }
 
-export function PatientCard({ patient, onMoveStage, onClick }: PatientCardProps) {
+export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragStart, onDragEnd }: PatientCardProps) {
   const stale = patient.stage !== "reconciled" && isStale(patient.updatedAt)
   const currentIdx = STAGE_ORDER.indexOf(patient.stage)
   const canAdvance = currentIdx < STAGE_ORDER.length - 1
@@ -36,19 +39,23 @@ export function PatientCard({ patient, onMoveStage, onClick }: PatientCardProps)
 
   return (
     <div
+      draggable
       onClick={() => onClick(patient)}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       className={cn(
-        "bg-white rounded-lg border p-3.5 cursor-pointer transition-all duration-150",
-        "hover:shadow-md hover:border-[#65BD6C]/40 hover:-translate-y-0.5",
+        "bg-white rounded-lg border p-3.5 cursor-grab active:cursor-grabbing transition-all duration-150",
+        "hover:shadow-md hover:border-[#F2994A]/40 hover:-translate-y-0.5",
         "active:shadow-sm active:translate-y-0",
         stale
           ? "border-amber-300 shadow-[0_0_0_1px_#FDE68A]"
-          : "border-[#EADEC0]",
+          : "border-[#E5E7EB]",
         patient.isFlagged && "border-l-[3px] border-l-[#E8792E]",
+        isDragging && "opacity-50 scale-95 shadow-lg rotate-2",
       )}
     >
       <div className="flex items-start justify-between mb-2 gap-2">
-        <p className="text-sm font-semibold text-[#1a1a1a] leading-tight truncate flex-1">
+        <p className="text-sm font-semibold text-[#1A1B1E] leading-tight truncate flex-1">
           {patient.name}
         </p>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -62,7 +69,7 @@ export function PatientCard({ patient, onMoveStage, onClick }: PatientCardProps)
       </div>
 
       {patient.appointmentDatetime && (
-        <p className="text-[11px] text-[#8B8D92] mb-1.5 flex items-center gap-1">
+        <p className="text-[11px] text-[#6B7280] mb-1.5 flex items-center gap-1">
           <Clock className="w-3 h-3" />
           {new Date(patient.appointmentDatetime).toLocaleDateString("en-US", {
             month: "short",
@@ -75,41 +82,43 @@ export function PatientCard({ patient, onMoveStage, onClick }: PatientCardProps)
 
       {patient.assignedUser && (
         <div className="flex items-center gap-1.5 mb-1.5">
-          <div className="w-4 h-4 rounded-full bg-[#036638]/10 flex items-center justify-center">
-            <span className="text-[8px] font-bold text-[#036638]">
+          <div className="w-4 h-4 rounded-full bg-[#E8792E]/10 flex items-center justify-center">
+            <span className="text-[8px] font-bold text-[#E8792E]">
               {patient.assignedUser.name.charAt(0).toUpperCase()}
             </span>
           </div>
-          <span className="text-[10px] text-[#036638] font-medium">
+          <span className="text-[10px] text-[#E8792E] font-medium">
             {patient.assignedUser.name}
           </span>
         </div>
       )}
 
-      <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#EADEC0]/50">
-        <span className="text-[10px] text-[#8B8D92]">{timeAgo(patient.updatedAt)}</span>
+      <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#E5E7EB]/50">
+        <span className="text-[10px] text-[#6B7280]">{timeAgo(patient.updatedAt)}</span>
         <div className="flex items-center gap-0.5">
           {canRetreat && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onMoveStage(patient.id, STAGE_ORDER[currentIdx - 1])
-              }}
-              className="p-0.5 rounded hover:bg-[#EBF7EC] text-[#8B8D92] hover:text-[#036638] transition-colors"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {canAdvance && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onMoveStage(patient.id, STAGE_ORDER[currentIdx + 1])
-              }}
-              className="p-0.5 rounded hover:bg-[#EBF7EC] text-[#8B8D92] hover:text-[#036638] transition-colors"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
+              <button
+                draggable={false}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onMoveStage(patient.id, STAGE_ORDER[currentIdx - 1])
+                }}
+                className="p-0.5 rounded hover:bg-[#FFF0E5] text-[#6B7280] hover:text-[#E8792E] transition-colors"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {canAdvance && (
+              <button
+                draggable={false}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onMoveStage(patient.id, STAGE_ORDER[currentIdx + 1])
+                }}
+                className="p-0.5 rounded hover:bg-[#FFF0E5] text-[#6B7280] hover:text-[#E8792E] transition-colors"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
           )}
         </div>
       </div>

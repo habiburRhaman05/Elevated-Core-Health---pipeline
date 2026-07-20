@@ -8,7 +8,7 @@ import { STAGE_ORDER, STAGE_LABELS, STAGE_HINTS } from "@/types"
 import type { Patient, PatientStage } from "@/types"
 import { Loader2 } from "lucide-react"
 
-export default function VABoardPage() {
+export default function AdminBoardPage() {
   const { data: patients, isLoading, error } = usePatients()
   const moveStage = useMoveStage()
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
@@ -30,7 +30,7 @@ export default function VABoardPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-6 h-6 text-[#036638] animate-spin" />
+        <Loader2 className="w-6 h-6 text-[#E8792E] animate-spin" />
       </div>
     )
   }
@@ -44,26 +44,26 @@ export default function VABoardPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-9rem)] -mx-6 -mb-6 overflow-x-auto">
+    <div className="h-[calc(100vh-9rem)]  -mx-6 -mb-6 overflow-x-auto">
       <div className="inline-flex h-full gap-3 p-6 min-w-max">
         {STAGE_ORDER.map((stage) => {
           const stagePatients = groupedPatients[stage] || []
           return (
             <div
               key={stage}
-              className="w-72 flex flex-col bg-[#EBF7EC]/40 rounded-xl border border-[#EADEC0]/50 shrink-0"
+              className="w-72 flex flex-col bg-[#FFF0E5]/40 rounded-xl border border-[#E5E7EB]/50 shrink-0"
             >
-              <div className="px-3.5 py-3 border-b border-[#EADEC0]/50">
+              <div className="px-3.5 py-3 border-b border-[#E5E7EB]/50">
                 <div className="flex items-center justify-between">
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-sm font-bold text-[#036638] truncate">
+                    <h3 className="text-sm font-bold text-[#E8792E] truncate">
                       {STAGE_LABELS[stage]}
                     </h3>
-                    <p className="text-[10px] text-[#8B8D92] mt-0.5">
+                    <p className="text-[10px] text-[#6B7280] mt-0.5">
                       {STAGE_HINTS[stage]}
                     </p>
                   </div>
-                  <span className="text-xs font-bold text-[#8B8D92] bg-white rounded-full w-5 h-5 flex items-center justify-center shrink-0 border border-[#EADEC0]">
+                  <span className="text-xs font-bold text-[#6B7280] bg-white rounded-full w-5 h-5 flex items-center justify-center shrink-0 border border-[#E5E7EB]">
                     {stagePatients.length}
                   </span>
                 </div>
@@ -81,7 +81,7 @@ export default function VABoardPage() {
                   ))
                 ) : (
                   <div className="text-center py-8">
-                    <p className="text-xs text-[#8B8D92] italic">No patients</p>
+                    <p className="text-xs text-[#6B7280] italic">No patients</p>
                   </div>
                 )}
               </div>

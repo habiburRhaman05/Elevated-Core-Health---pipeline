@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
-const authRoutes = ["/login"]
-const vaRoutes = ["/va"]
-const adminRoutes = ["/admin"]
+const publicRoutes = ["/login", "/forgot-password", "/reset-password"]
+const dashboardRoutes = ["/dashboard"]
+const adminRoutes = ["/admin/dashboard"]
 
 export function middleware(request: NextRequest) {
   const accessToken = request.cookies.get("ech_access_token")?.value
@@ -11,18 +11,18 @@ export function middleware(request: NextRequest) {
 
   const isAuth = !!accessToken
 
-  if (authRoutes.some((route) => pathname.startsWith(route)) && isAuth) {
+  if (publicRoutes.some((route) => pathname === route) && isAuth) {
     const role = request.cookies.get("ech_role")?.value
     if (role === "admin") {
-      return NextResponse.redirect(new URL("/admin", request.url))
+      return NextResponse.redirect(new URL("/admin/dashboard", request.url))
     }
-    return NextResponse.redirect(new URL("/va", request.url))
+    return NextResponse.redirect(new URL("/dashboard", request.url))
   }
 
-  const isVaRoute = vaRoutes.some((route) => pathname.startsWith(route))
+  const isDashboardRoute = dashboardRoutes.some((route) => pathname.startsWith(route))
   const isAdminRoute = adminRoutes.some((route) => pathname.startsWith(route))
 
-  if ((isVaRoute || isAdminRoute) && !isAuth) {
+  if ((isDashboardRoute || isAdminRoute) && !isAuth) {
     const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("redirect", pathname)
     return NextResponse.redirect(loginUrl)
@@ -31,14 +31,7 @@ export function middleware(request: NextRequest) {
   if (isAdminRoute && isAuth) {
     const role = request.cookies.get("ech_role")?.value
     if (role !== "admin") {
-      return NextResponse.redirect(new URL("/va", request.url))
-    }
-  }
-
-  if (isVaRoute && isAuth) {
-    const role = request.cookies.get("ech_role")?.value
-    if (role !== "va" && role !== "admin") {
-      return NextResponse.redirect(new URL("/login", request.url))
+      return NextResponse.redirect(new URL("/dashboard", request.url))
     }
   }
 

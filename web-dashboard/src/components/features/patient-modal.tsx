@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import type { Patient, PatientStage } from "@/types"
 import { STAGE_ORDER, STAGE_LABELS, STAGE_HINTS } from "@/types"
 import { ROLES, STALE_HOURS } from "@/constants"
@@ -25,6 +25,7 @@ import {
   useClearFlag,
   useClaimPatient,
   useAssignPatient,
+  useChecklistItems,
 } from "@/hooks/query/usePatients"
 import { usePatient } from "@/hooks/query/usePatients"
 import { useActivityLog } from "@/hooks/query/useActivityLog"
@@ -60,6 +61,24 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   const clearFlag = useClearFlag()
   const claimPatient = useClaimPatient()
   const assignPatient = useAssignPatient()
+
+  const { data: checklistDefs } = useChecklistItems()
+
+  const currentStageItems = useMemo(() => {
+    if (!checklistDefs || !patient) return []
+    return checklistDefs
+      .filter((item) => item.stage === patient.stage)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+  }, [checklistDefs, patient])
+
+  const currentState = patient?.checklistState?.[patient.stage] || {}
+
+  const totalItems = currentStageItems.length
+  const completedItems = currentStageItems.filter(
+    (item) => currentState[item.id] === true,
+  ).length
+  const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 100
+  const allComplete = totalItems === 0 || completedItems === totalItems
 
   const [notesText, setNotesText] = useState("")
   const [flagReason, setFlagReason] = useState("")
@@ -115,15 +134,15 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto mx-4 animate-in fade-in zoom-in-95 duration-200">
         {isLoading || !patient ? (
-          <div className="p-8 text-center text-[#8B8D92] text-sm">
+          <div className="p-8 text-center text-[#6B7280] text-sm">
             {isLoading ? "Loading..." : "Patient not found"}
           </div>
         ) : (
           <>
-            <div className="sticky top-0 bg-white border-b border-[#EADEC0]/50 px-6 py-4 flex items-start justify-between z-10 rounded-t-xl">
+            <div className="sticky top-0 bg-white border-b border-[#E5E7EB]/50 px-6 py-4 flex items-start justify-between z-10 rounded-t-xl">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <h2 className="text-lg font-bold text-[#1a1a1a] truncate">
+                  <h2 className="text-lg font-bold text-[#1A1B1E] truncate">
                     {patient.name}
                   </h2>
                   {patient.isFlagged && (
@@ -145,14 +164,14 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                     </Badge>
                   )}
                 </div>
-                <p className="text-xs text-[#8B8D92]">
+                <p className="text-xs text-[#6B7280]">
                   {STAGE_LABELS[patient.stage]} &middot; Created{" "}
                   {new Date(patient.createdAt).toLocaleDateString()}
                 </p>
               </div>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg hover:bg-[#EBF7EC] text-[#8B8D92] hover:text-[#036638] transition-colors"
+                className="p-1.5 rounded-lg hover:bg-[#FFF0E5] text-[#6B7280] hover:text-[#E8792E] transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -161,7 +180,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
             <div className="p-6 space-y-6">
               {/* Stage Navigation */}
               <div>
-                <p className="text-[11px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-2">
+                <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider mb-2">
                   Pipeline Stage
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -170,20 +189,27 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                     const currentIdx = STAGE_ORDER.indexOf(patient.stage)
                     const isComplete = idx < currentIdx
                     const isCurrent = stage === patient.stage
+                    const isFuture = idx > currentIdx + 1
                     return (
                       <button
                         key={stage}
                         onClick={() => handleMoveStage(stage)}
-                        disabled={moveStage.isPending}
+                        disabled={moveStage.isPending || isFuture}
+                        title={
+                          isFuture
+                            ? "Complete the current stage first"
+                            : STAGE_LABELS[stage]
+                        }
                         className={cn(
                           "flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-all border",
                           isCurrent &&
-                            "bg-[#036638] text-white border-[#036638] shadow-sm",
+                            "bg-[#E8792E] text-white border-[#E8792E] shadow-sm",
                           isComplete &&
-                            "bg-[#EBF7EC] text-[#036638] border-[#65BD6C]/30",
-                          !isCurrent &&
-                            !isComplete &&
-                            "bg-white text-[#8B8D92] border-[#EADEC0] hover:border-[#65BD6C]/40",
+                            "bg-[#FFF0E5] text-[#E8792E] border-[#F2994A]/30",
+                          !isCurrent && !isComplete && !isFuture &&
+                            "bg-white text-[#6B7280] border-[#E5E7EB] hover:border-[#F2994A]/40",
+                          isFuture &&
+                            "bg-gray-50 text-[#B0B2B8] border-[#E5E7EB]/50 cursor-not-allowed",
                         )}
                       >
                         {isComplete && <Check className="w-3 h-3" />}
@@ -196,60 +222,98 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
 
               {/* Checklist */}
               <div>
-                <p className="text-[11px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-2">
+                <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider mb-2">
                   Checklist — {STAGE_LABELS[patient.stage]}
                 </p>
-                <div className="space-y-1.5">
-                  {patient.checklistState &&
-                  Object.keys(patient.checklistState).length > 0 ? (
-                    Object.entries(
-                      patient.checklistState[patient.stage] || {},
-                    ).map(([itemId, checked]) => (
-                      <label
-                        key={itemId}
-                        className="flex items-center gap-2.5 py-1.5 px-2 rounded-md hover:bg-[#EBF7EC]/50 cursor-pointer transition-colors"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!checked}
-                          onChange={() =>
-                            toggleChecklist.mutate({
-                              id: patient.id,
-                              itemId,
-                              checked: !checked,
-                            })
-                          }
-                          className="w-4 h-4 rounded border-[#EADEC0] text-[#036638] focus:ring-[#036638] accent-[#036638]"
-                        />
-                        <span
-                          className={cn(
-                            "text-sm",
-                            checked
-                              ? "text-[#8B8D92] line-through"
-                              : "text-[#1a1a1a]",
-                          )}
-                        >
-                          {itemId.replace(/_/g, " ")}
+
+                {totalItems > 0 ? (
+                  <>
+                    {/* Progress Indicator */}
+                    <div className="mb-3">
+                      <div className="flex items-center justify-between text-xs text-[#6B7280] mb-1.5">
+                        <span>
+                          {completedItems} / {totalItems} Completed
                         </span>
-                      </label>
-                    ))
-                  ) : (
-                    <p className="text-xs text-[#8B8D92] italic">
-                      No checklist items for this stage
-                    </p>
-                  )}
-                </div>
+                        <span>{progress}%</span>
+                      </div>
+                      <div className="w-full h-2 bg-[#E5E7EB]/30 rounded-full overflow-hidden">
+                        <div
+                          className={cn(
+                            "h-full rounded-full transition-all duration-300",
+                              allComplete
+                                ? "bg-[#3FA66E]"
+                                : "bg-[#E8792E]",
+                          )}
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                      {allComplete && (
+                        <p className="text-xs text-[#3FA66E] font-medium mt-1.5 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" />
+                          All {STAGE_LABELS[patient.stage]} tasks completed. You may now move to the next stage.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Checklist Items */}
+                    <div className="space-y-1">
+                      {currentStageItems.map((item) => {
+                        const checked = !!currentState[item.id]
+                        return (
+                          <label
+                            key={item.id}
+                            className="flex items-start gap-2.5 py-2 px-2 rounded-md hover:bg-[#FFF0E5]/50 cursor-pointer transition-colors"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                toggleChecklist.mutate({
+                                  id: patient.id,
+                                  itemId: item.id,
+                                  checked: !checked,
+                                })
+                              }
+                              className="mt-0.5 w-4 h-4 rounded border-[#E5E7EB] text-[#E8792E] focus:ring-[#E8792E] accent-[#E8792E]"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <span
+                                className={cn(
+                                  "text-sm font-semibold",
+                                  checked
+                                    ? "text-[#6B7280] line-through"
+                                    : "text-[#1A1B1E]",
+                                )}
+                              >
+                                {item.label}
+                              </span>
+                              {item.description && (
+                                <p className="text-[11px] text-[#6B7280] mt-0.5">
+                                  {item.description}
+                                </p>
+                              )}
+                            </div>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-[#6B7280] italic">
+                    No checklist items for this stage
+                  </p>
+                )}
               </div>
 
               {/* Details */}
               <div className="grid grid-cols-2 gap-4">
                 {patient.appointmentDatetime && (
                   <div>
-                    <p className="text-[10px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-1">
+                    <p className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider mb-1">
                       Appointment
                     </p>
-                    <p className="text-sm text-[#1a1a1a] flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-[#65BD6C]" />
+                    <p className="text-sm text-[#1A1B1E] flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-[#F2994A]" />
                       {new Date(patient.appointmentDatetime).toLocaleString("en-US", {
                         month: "short",
                         day: "numeric",
@@ -262,37 +326,37 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                 )}
                 {patient.assignedUser && (
                   <div>
-                    <p className="text-[10px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-1">
+                    <p className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider mb-1">
                       Assigned To
                     </p>
-                    <p className="text-sm text-[#1a1a1a]">
+                    <p className="text-sm text-[#1A1B1E]">
                       {patient.assignedUser.name}
                     </p>
                   </div>
                 )}
                 <div>
-                  <p className="text-[10px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-1">
+                  <p className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider mb-1">
                     Source
                   </p>
-                  <p className="text-sm text-[#1a1a1a] capitalize">
+                  <p className="text-sm text-[#1A1B1E] capitalize">
                     {patient.source || "Manual"}
                   </p>
                 </div>
                 {patient.bookingPlatform && (
                   <div>
-                    <p className="text-[10px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-1">
+                    <p className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider mb-1">
                       Booking Platform
                     </p>
-                    <p className="text-sm text-[#1a1a1a]">
+                    <p className="text-sm text-[#1A1B1E]">
                       {patient.bookingPlatform}
                     </p>
                   </div>
                 )}
                 <div>
-                  <p className="text-[10px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-1">
+                  <p className="text-[10px] font-semibold text-[#6B7280] uppercase tracking-wider mb-1">
                     Last Updated
                   </p>
-                  <p className="text-sm text-[#1a1a1a]">
+                  <p className="text-sm text-[#1A1B1E]">
                     {timeAgo(patient.updatedAt)}
                   </p>
                 </div>
@@ -308,12 +372,12 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                         Flagged for Donna
                       </p>
                       {patient.flagReason && (
-                        <p className="text-sm text-[#1a1a1a] mt-1">
+                        <p className="text-sm text-[#1A1B1E] mt-1">
                           {patient.flagReason}
                         </p>
                       )}
                       {patient.flaggedByUser && (
-                        <p className="text-[11px] text-[#8B8D92] mt-1">
+                        <p className="text-[11px] text-[#6B7280] mt-1">
                           by {patient.flaggedByUser.name}
                           {patient.flaggedAt &&
                             ` · ${new Date(patient.flaggedAt).toLocaleString()}`}
@@ -382,7 +446,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                     size="sm"
                     onClick={handleClaim}
                     disabled={claimPatient.isPending}
-                    className="bg-[#036638] hover:bg-[#028544] text-white text-xs"
+                    className="bg-[#E8792E] hover:bg-[#D4691F] text-white text-xs"
                   >
                     {claimPatient.isPending ? "Claiming..." : "Claim Patient"}
                   </Button>
@@ -391,7 +455,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
 
               {/* Notes */}
               <div>
-                <p className="text-[11px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-2">
+                <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider mb-2">
                   Operational Notes
                 </p>
                 <div className="space-y-2">
@@ -406,7 +470,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                       size="sm"
                       onClick={handleSaveNotes}
                       disabled={savingNotes}
-                      className="bg-[#036638] hover:bg-[#028544] text-white text-xs"
+                      className="bg-[#E8792E] hover:bg-[#D4691F] text-white text-xs"
                     >
                       {savingNotes ? "Saving..." : "Save Notes"}
                     </Button>
@@ -416,7 +480,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
 
               {/* Activity Log */}
               <div>
-                <p className="text-[11px] font-semibold text-[#8B8D92] uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider mb-2 flex items-center gap-1.5">
                   <MessageSquare className="w-3 h-3" />
                   Activity Log
                 </p>
@@ -425,9 +489,9 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                     logData.logs.map((log) => (
                       <div
                         key={log.id}
-                        className="flex items-start gap-2 text-xs py-1.5 border-b border-[#EADEC0]/30 last:border-0"
+                        className="flex items-start gap-2 text-xs py-1.5 border-b border-[#E5E7EB]/30 last:border-0"
                       >
-                        <span className="text-[10px] text-[#8B8D92] whitespace-nowrap">
+                        <span className="text-[10px] text-[#6B7280] whitespace-nowrap">
                           {new Date(log.createdAt).toLocaleString("en-US", {
                             month: "short",
                             day: "numeric",
@@ -435,14 +499,14 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                             minute: "2-digit",
                           })}
                         </span>
-                        <span className="font-medium text-[#036638] min-w-fit">
+                        <span className="font-medium text-[#E8792E] min-w-fit">
                           {log.author}:
                         </span>
-                        <span className="text-[#4a4a4a]">{log.message}</span>
+                        <span className="text-[#374151]">{log.message}</span>
                       </div>
                     ))
                   ) : (
-                    <p className="text-xs text-[#8B8D92] italic">No activity yet</p>
+                    <p className="text-xs text-[#6B7280] italic">No activity yet</p>
                   )}
                 </div>
               </div>

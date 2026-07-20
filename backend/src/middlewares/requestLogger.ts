@@ -11,9 +11,7 @@ import { env } from "@/utils/envConfig";
 // `transport: { target: "pino-pretty" }` worker thread: the worker (thread-stream)
 // crashes with "this should not happen: undefined" under Node 24 + tsx --watch.
 // Passing pino-pretty as a stream keeps the readable output without a worker.
-const logger = env.isProduction
-	? pino({ level: "info" })
-	: pino({ level: "debug" }, pretty({ colorize: true }));
+const logger = env.isProduction ? pino({ level: "info" }) : pino({ level: "debug" }, pretty({ colorize: true }));
 
 const getLogLevel = (status: number) => {
 	if (status >= StatusCodes.INTERNAL_SERVER_ERROR) return "error";

@@ -48,26 +48,26 @@ const CHECKLISTS: Record<string, string[]> = {
 
 export default function SOPPage() {
   return (
-    <div className="space-y-6 max-w-4xl pb-12">
+    <div className="space-y-6  max-w-[1600px] mx-auto pb-12">
       <div>
         <div className="flex items-center gap-3 mb-1">
-          <ScrollText className="w-5 h-5 text-[#036638]" />
-          <h1 className="text-xl font-bold text-[#1a1a1a]">
+          <ScrollText className="w-5 h-5 text-[#E8792E]" />
+          <h1 className="text-xl font-bold text-[#1A1B1E]">
             SOP Reference
           </h1>
         </div>
-        <p className="text-sm text-[#8B8D92]">
+        <p className="text-sm text-[#6B7280]">
           Standard operating procedures for the patient pipeline
         </p>
       </div>
 
       {/* Key Rules */}
-      <div className="bg-white rounded-xl border border-[#EADEC0] p-5 space-y-3">
-        <h2 className="text-sm font-bold text-[#036638]">Key Rules</h2>
+      <div className="bg-white rounded-xl border border-[#E5E7EB] p-5 space-y-3">
+        <h2 className="text-sm font-bold text-[#E8792E]">Key Rules</h2>
         <div className="space-y-2">
           <div className="flex items-start gap-2.5">
-            <CheckCircle className="w-4 h-4 text-[#65BD6C] mt-0.5 shrink-0" />
-            <p className="text-sm text-[#4a4a4a]">
+            <CheckCircle className="w-4 h-4 text-[#F2994A] mt-0.5 shrink-0" />
+            <p className="text-sm text-[#374151]">
               <strong>Forward moves are checklist-gated.</strong> A patient cannot advance
               until every checklist item for the current stage is checked. Backward moves
               are always allowed.
@@ -75,21 +75,21 @@ export default function SOPPage() {
           </div>
           <div className="flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-            <p className="text-sm text-[#4a4a4a]">
+            <p className="text-sm text-[#374151]">
               <strong>Stale flag (48h).</strong> If a card hasn&apos;t been updated in 48+
               hours and is not in <strong>Reconciled</strong>, it gets flagged visually.
             </p>
           </div>
           <div className="flex items-start gap-2.5">
             <Flag className="w-4 h-4 text-[#E8792E] mt-0.5 shrink-0" />
-            <p className="text-sm text-[#4a4a4a]">
+            <p className="text-sm text-[#374151]">
               <strong>Flag for Donna.</strong> Any VA can flag a card with a text reason.
               Only Donna can clear flags. Use this for issues needing her attention.
             </p>
           </div>
           <div className="flex items-start gap-2.5">
-            <CheckCircle className="w-4 h-4 text-[#65BD6C] mt-0.5 shrink-0" />
-            <p className="text-sm text-[#4a4a4a]">
+            <CheckCircle className="w-4 h-4 text-[#F2994A] mt-0.5 shrink-0" />
+            <p className="text-sm text-[#374151]">
               <strong>No clinical data.</strong> Notes fields are for operational status
               only — never diagnoses or clinical details.
             </p>
@@ -99,17 +99,17 @@ export default function SOPPage() {
 
       {/* Stage Checklists */}
       {STAGE_ORDER.map((stage) => (
-        <div key={stage} className="bg-white rounded-xl border border-[#EADEC0] p-5">
+        <div key={stage} className="bg-white rounded-xl border border-[#E5E7EB] p-5">
           <div className="mb-3">
-            <h3 className="text-sm font-bold text-[#036638]">
+            <h3 className="text-sm font-bold text-[#E8792E]">
               {STAGE_LABELS[stage]}
             </h3>
-            <p className="text-xs text-[#8B8D92]">{STAGE_HINTS[stage]}</p>
+            <p className="text-xs text-[#6B7280]">{STAGE_HINTS[stage]}</p>
           </div>
           <ul className="space-y-1.5">
             {CHECKLISTS[stage]?.map((item, i) => (
-              <li key={i} className="flex items-start gap-2.5 text-sm text-[#4a4a4a]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#65BD6C] mt-1.5 shrink-0" />
+              <li key={i} className="flex items-start gap-2.5 text-sm text-[#374151]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#F2994A] mt-1.5 shrink-0" />
                 {item}
               </li>
             ))}

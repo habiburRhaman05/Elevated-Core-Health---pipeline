@@ -29,4 +29,24 @@ export const AuthService = {
   async logout(refreshToken?: string): Promise<void> {
     await axiosInstance.post(API_ENDPOINTS.AUTH.LOGOUT, { refreshToken })
   },
+
+  async updateProfile(input: { name?: string; email?: string }): Promise<User> {
+    const { data } = await axiosInstance.patch<ApiResponse<User>>(
+      API_ENDPOINTS.AUTH.PROFILE,
+      input,
+    )
+    return data.data
+  },
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await axiosInstance.post(API_ENDPOINTS.AUTH.CHANGE_PASSWORD, { currentPassword, newPassword })
+  },
+
+  async forgotPassword(email: string): Promise<void> {
+    await axiosInstance.post(API_ENDPOINTS.AUTH.FORGOT_PASSWORD, { email })
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    await axiosInstance.post(API_ENDPOINTS.AUTH.RESET_PASSWORD, { token, newPassword })
+  },
 }

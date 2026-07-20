@@ -2,8 +2,7 @@ import { Router } from "express";
 
 import { requireAuth, requireRole } from "@/middlewares/auth";
 import { env } from "@/utils/envConfig";
-import { handleServiceResponse } from "@/utils/httpHandlers";
-import { validateRequest } from "@/utils/httpHandlers";
+import { handleServiceResponse, validateRequest } from "@/utils/httpHandlers";
 import { ServiceResponse } from "@/utils/serviceResponse";
 import { patientsController } from "./patients.controller";
 import {
@@ -38,6 +37,7 @@ patientsPublicRouter.post(
 patientsRouter.use(requireAuth);
 
 patientsRouter.get("/", patientsController.list);
+patientsRouter.get("/checklist-items", patientsController.listChecklistItems);
 patientsRouter.get("/:id", patientsController.getById);
 patientsRouter.patch("/:id/stage", validateRequest(StageMoveSchema), patientsController.moveStage);
 patientsRouter.patch("/:id/assign", validateRequest(AssignSchema), patientsController.assign);
@@ -49,8 +49,4 @@ patientsRouter.delete("/:id", requireRole("admin"), patientsController.deletePat
 patientsRouter.post("/:id/claim", validateRequest(ClaimSchema), patientsController.claim);
 
 // Frontend test endpoint — simulates webhook intake (requires auth, not webhook secret)
-patientsRouter.post(
-	"/intake-test",
-	validateRequest(IntakeSchema),
-	patientsController.intake,
-);
+patientsRouter.post("/intake-test", validateRequest(IntakeSchema), patientsController.intake);

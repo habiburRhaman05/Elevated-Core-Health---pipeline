@@ -1,9 +1,8 @@
 import { StatusCodes } from "http-status-codes";
-
+import type { z } from "zod";
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/utils/prisma";
 import { ServiceResponse } from "@/utils/serviceResponse";
-import type { z } from "zod";
 import type { ChecklistItemSchema, CreateUserSchema, UpdateUserSchema } from "./admin.validation";
 
 type CreateUserInput = z.infer<typeof CreateUserSchema>["body"];

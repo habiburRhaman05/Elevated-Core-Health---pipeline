@@ -2,12 +2,11 @@ import cors from "cors";
 import express, { type Express } from "express";
 import helmet from "helmet";
 import { pino } from "pino";
-
-import { apiRouter } from "./moduels/routes";
 import errorHandler from "./middlewares/errorHandler";
 import { globalErrorHandler } from "./middlewares/globalError";
 import rateLimiter from "./middlewares/rateLimiter";
 import requestLogger from "./middlewares/requestLogger";
+import { apiRouter } from "./moduels/routes";
 import { env } from "./utils/envConfig";
 
 const logger = pino({ name: "server start" });

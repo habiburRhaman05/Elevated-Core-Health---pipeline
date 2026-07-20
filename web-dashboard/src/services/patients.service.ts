@@ -74,6 +74,13 @@ export const PatientsService = {
     return data.data
   },
 
+  async getChecklistItems(): Promise<ChecklistItemDef[]> {
+    const { data } = await axiosInstance.get<ApiResponse<ChecklistItemDef[]>>(
+      `${API_ENDPOINTS.PATIENTS}/checklist-items`,
+    )
+    return data.data
+  },
+
   async intake(input: {
     name: string
     email?: string | null

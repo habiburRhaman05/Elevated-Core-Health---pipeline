@@ -36,7 +36,14 @@ export function useMoveStage() {
       toast.success("Stage updated")
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.message || "Failed to move stage")
+      const message = err?.response?.data?.message
+      if (message?.includes("skip stages")) {
+        toast.error("Cannot skip stages. Move forward one stage at a time.")
+      } else if (message?.includes("checklist")) {
+        toast.error("Please complete all checklist items before moving to the next stage.")
+      } else {
+        toast.error(message || "Failed to move stage")
+      }
     },
   })
 }
@@ -56,6 +63,14 @@ export function useAssignPatient() {
   })
 }
 
+export function useChecklistItems() {
+  return useQuery({
+    queryKey: QUERY_KEYS.PATIENTS.CHECKLIST_ITEMS,
+    queryFn: () => PatientsService.getChecklistItems(),
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
 export function useToggleChecklist() {
   const qc = useQueryClient()
   return useMutation({
@@ -68,11 +83,57 @@ export function useToggleChecklist() {
       itemId: string
       checked: boolean
     }) => PatientsService.toggleChecklist(id, itemId, checked),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: QUERY_KEYS.PATIENTS.ALL })
+    onMutate: async ({ id, itemId, checked }) => {
+      await qc.cancelQueries({ queryKey: QUERY_KEYS.PATIENTS.ALL })
+      await qc.cancelQueries({ queryKey: QUERY_KEYS.PATIENTS.DETAIL(id) })
+
+      const previousList = qc.getQueryData<Patient[]>(QUERY_KEYS.PATIENTS.ALL)
+      const previousDetail = qc.getQueryData<Patient>(QUERY_KEYS.PATIENTS.DETAIL(id))
+
+      qc.setQueryData<Patient[]>(QUERY_KEYS.PATIENTS.ALL, (old) => {
+        if (!old) return old
+        return old.map((p) => {
+          if (p.id !== id) return p
+          return {
+            ...p,
+            checklistState: {
+              ...p.checklistState,
+              [p.stage]: {
+                ...(p.checklistState[p.stage] || {}),
+                [itemId]: checked,
+              },
+            },
+          }
+        })
+      })
+
+      qc.setQueryData<Patient>(QUERY_KEYS.PATIENTS.DETAIL(id), (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          checklistState: {
+            ...old.checklistState,
+            [old.stage]: {
+              ...(old.checklistState[old.stage] || {}),
+              [itemId]: checked,
+            },
+          },
+        }
+      })
+
+      return { previousList, previousDetail }
     },
-    onError: (err: any) => {
+    onError: (err: any, vars, context) => {
+      if (context?.previousList) {
+        qc.setQueryData(QUERY_KEYS.PATIENTS.ALL, context.previousList)
+      }
+      if (context?.previousDetail) {
+        qc.setQueryData(QUERY_KEYS.PATIENTS.DETAIL(vars.id), context.previousDetail)
+      }
       toast.error(err?.response?.data?.message || "Failed to update checklist")
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.PATIENTS.ALL })
     },
   })
 }

@@ -23,13 +23,15 @@ enum PatientStage {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  role         UserRole @default(va)
-  shift        String?
-  createdAt    DateTime @default(now()) @map("created_at")
+  id                   String    @id @default(uuid())
+  name                 String
+  email                String    @unique
+  passwordHash         String    @map("password_hash")
+  role                 UserRole  @default(va)
+  shift                String?
+  passwordResetToken   String?   @map("password_reset_token")
+  passwordResetExpires DateTime? @map("password_reset_expires")
+  createdAt            DateTime  @default(now()) @map("created_at")
 
   assignedPatients Patient[]     @relation("PatientAssignedTo")
   flaggedPatients  Patient[]     @relation("PatientFlaggedBy")
@@ -102,12 +104,13 @@ model RefreshToken {
 }
 
 model ChecklistItem {
-  id        String @id @default(uuid())
-  stage     PatientStage
-  label     String
-  isDefault Boolean @default(false) @map("is_default")
-  sortOrder Int     @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String       @id @default(uuid())
+  stage       PatientStage
+  label       String
+  description String?
+  isDefault   Boolean      @default(false) @map("is_default")
+  sortOrder   Int          @default(0) @map("sort_order")
+  createdAt   DateTime     @default(now()) @map("created_at")
 
   @@unique([stage, label])
   @@index([stage])

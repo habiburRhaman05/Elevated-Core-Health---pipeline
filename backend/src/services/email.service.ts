@@ -38,7 +38,7 @@ export const emailService = {
 <p>A new patient has been added to the pipeline:</p>
 <p><strong>${patientName}</strong></p>
 <p>Click below to take responsibility for this patient:</p>
-<a href="${claimLink}" style="display:inline-block;padding:12px 24px;background:#036638;color:#fff;text-decoration:none;border-radius:6px;font-size:16px;">
+<a href="${claimLink}" style="display:inline-block;padding:12px 24px;background:#E8792E;color:#fff;text-decoration:none;border-radius:6px;font-size:16px;">
   Take Responsibility
 </a>
 <p style="margin-top:16px;font-size:12px;color:#666;">
