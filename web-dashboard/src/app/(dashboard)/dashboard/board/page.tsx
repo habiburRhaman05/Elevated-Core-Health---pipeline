@@ -1,10 +1,14 @@
 "use client"
 
+import { useSearchParams } from "next/navigation"
 import { KanbanBoard } from "@/components/features/kanban-board"
 import { StatusBar } from "@/components/features/status-bar"
 import { LayoutGrid } from "lucide-react"
 
 export default function VABoardPage() {
+  const searchParams = useSearchParams()
+  const claimPatientId = searchParams.get("claim")
+
   return (
     <div className="flex flex-col h-full">
       {/* — Board Header — */}
@@ -22,7 +26,7 @@ export default function VABoardPage() {
       </div>
 
       {/* — Kanban Board — */}
-      <KanbanBoard />
+      <KanbanBoard initialPatientId={claimPatientId ?? undefined} />
     </div>
   )
 }

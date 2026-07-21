@@ -1,9 +1,10 @@
+import { Resend } from "resend";
 import { env } from "@/utils/envConfig";
 import { logger } from "@/utils/logger";
 
 const APP_URL = env.CORS_ORIGIN || "http://localhost:3000";
 const FROM_NAME = "Elevated Core Health";
-const FROM_EMAIL = "notifications@elevatedcorehealth.com";
+const FROM_EMAIL = env.FROM_EMAIL;
 
 function brandedWrapper(htmlBody: string): string {
 	return `<!DOCTYPE html>
@@ -81,15 +82,18 @@ async function sendResend(params: SendEmailParams): Promise<void> {
 	}
 
 	try {
-		const { Resend } = await import("resend");
 		const resend = new Resend(env.RESEND_API_KEY);
-		const result = await resend.emails.send({
-			from: `${FROM_NAME} <${FROM_EMAIL}>`,
+		const { data, error } = await resend.emails.send({
+			from: `My App <onboarding@resend.dev>`,
 			to: Array.isArray(params.to) ? params.to : [params.to],
 			subject: params.subject,
 			html: params.html,
 		});
-		logger.info({ to: params.to, subject: params.subject, id: result?.id }, "Email sent successfully");
+		if (error) {
+			logger.error({ to: params.to, subject: params.subject, error }, "Resend API returned an error");
+			throw new Error(error.message ?? "Resend API error");
+		}
+		logger.info({ to: params.to, subject: params.subject, id: data?.id }, "Email sent successfully");
 	} catch (err) {
 		logger.error({ err, to: params.to, subject: params.subject }, "Failed to send email");
 		throw err;
@@ -104,15 +108,21 @@ export const emailService = {
 	async notifyNewPatient(
 		patientName: string,
 		patientId: string,
-		vaEmails: { jude: string; amanda: string },
+		vaEmails: string[],
 		details?: { appointment?: string; platform?: string },
 	) {
 		const claimUrl = `${APP_URL}/dashboard/board?claim=${patientId}`;
 
 		const detailsHtml = [
-			details?.platform ? `<p style="margin:4px 0;font-size:14px;color:#4B5563;"><strong>Source:</strong> ${details.platform}</p>` : "",
-			details?.appointment ? `<p style="margin:4px 0;font-size:14px;color:#4B5563;"><strong>Appointment:</strong> ${details.appointment}</p>` : "",
-		].filter(Boolean).join("");
+			details?.platform
+				? `<p style="margin:4px 0;font-size:14px;color:#4B5563;"><strong>Source:</strong> ${details.platform}</p>`
+				: "",
+			details?.appointment
+				? `<p style="margin:4px 0;font-size:14px;color:#4B5563;"><strong>Appointment:</strong> ${details.appointment}</p>`
+				: "",
+		]
+			.filter(Boolean)
+			.join("");
 
 		const html = brandedWrapper(`
 <h2 style="margin:0 0 8px 0;font-size:20px;font-weight:700;color:#1A1B1E;">New Patient Available</h2>
@@ -132,7 +142,7 @@ ${buttonHtml(claimUrl, "Claim This Patient")}
 
 		const errors: string[] = [];
 		await Promise.all(
-			[vaEmails.jude, vaEmails.amanda].map(async (email) => {
+			vaEmails.map(async (email) => {
 				try {
 					await sendResend({ to: email, subject: `New patient available: ${patientName}`, html });
 				} catch {

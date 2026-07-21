@@ -11,11 +11,11 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/auth/useAuth"
 
-export function KanbanBoard() {
+export function KanbanBoard({ initialPatientId }: { initialPatientId?: string }) {
   const { data: patients, isLoading, error } = usePatients()
   const moveStage = useMoveStage()
   const { user: currentUser } = useAuth()
-  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null)
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(initialPatientId ?? null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const pendingMoves = useRef<Set<string>>(new Set())

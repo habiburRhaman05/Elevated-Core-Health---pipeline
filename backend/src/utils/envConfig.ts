@@ -28,6 +28,7 @@ const envSchema = z.object({
 	WEBHOOK_SECRET: z.string().min(16, "WEBHOOK_SECRET must be at least 16 characters"),
 
 	RESEND_API_KEY: emptyToUndefined(z.string().optional()),
+	FROM_EMAIL: z.string().default("notifications@elevatedcorehealth.com"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

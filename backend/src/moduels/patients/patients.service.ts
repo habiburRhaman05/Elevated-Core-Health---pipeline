@@ -190,9 +190,13 @@ export const patientsService = {
 
 		await logActivity(id, user.name, `Flagged for Donna: ${input.reason}`, "manual");
 
-		const admin = await prisma.user.findFirst({ where: { role: "admin" }, select: { email: true } });
-		if (admin) {
-			emailService.notifyFlagged(patient.name, user.name, input.reason, admin.email).catch(() => {});
+		try {
+			const admin = await prisma.user.findFirst({ where: { role: "admin" }, select: { email: true } });
+			if (admin) {
+				await emailService.notifyFlagged(patient.name, user.name, input.reason, admin.email);
+			}
+		} catch (err) {
+			logger.error({ err, patientId: id }, "Failed to send flag notification email");
 		}
 
 		return ServiceResponse.success("Patient flagged.", updated);
@@ -248,10 +252,14 @@ export const patientsService = {
 
 		await logActivity(id, user.name, `Claimed responsibility for patient`, "manual");
 
-		const vas = await prisma.user.findMany({ where: { role: "va" }, select: { id: true, name: true, email: true } });
-		const otherVa = vas.find((v) => v.id !== input.userId);
-		if (otherVa) {
-			emailService.notifyClaimed(patient.name, user.name, otherVa.email).catch(() => {});
+		try {
+			const vas = await prisma.user.findMany({ where: { role: "va" }, select: { id: true, name: true, email: true } });
+			const otherVa = vas.find((v) => v.id !== input.userId);
+			if (otherVa) {
+				await emailService.notifyClaimed(patient.name, user.name, otherVa.email);
+			}
+		} catch (err) {
+			logger.error({ err, patientId: id }, "Failed to send claim notification email");
 		}
 
 		return ServiceResponse.success("Patient claimed.", updated);
@@ -283,25 +291,35 @@ export const patientsService = {
 			},
 		});
 
-		await logActivity(
-			patient.id,
-			"system",
-			input.bookingPlatform
-				? `New patient auto-created from booking email (${input.bookingPlatform})`
-				: "New patient auto-created from booking email",
-			"auto",
-		);
+		const platformLabel = input.bookingPlatform ?? "email";
+		await logActivity(patient.id, "system", `New patient auto-created from booking email (${platformLabel})`, "auto");
 
-		const vas = await prisma.user.findMany({ where: { role: "va" }, select: { name: true, email: true } });
-		const jude = vas.find((v) => v.name.toLowerCase() === "jude");
-		const amanda = vas.find((v) => v.name.toLowerCase() === "amanda");
-		if (jude && amanda) {
-			emailService
-				.notifyNewPatient(patient.name, patient.id, {
-					jude: jude.email,
-					amanda: amanda.email,
-				})
-				.catch(() => {});
+		try {
+			const vas = await prisma.user.findMany({ where: { role: "va" }, select: { email: true } });
+			const vaEmails = vas.map((v) => v.email).filter(Boolean) as string[];
+			if (vaEmails.length > 0) {
+				const appointmentStr = appointmentDatetime
+					? appointmentDatetime.toLocaleDateString("en-US", {
+							weekday: "short",
+							month: "short",
+							day: "numeric",
+							year: "numeric",
+							hour: "numeric",
+							minute: "2-digit",
+						})
+					: undefined;
+				await emailService.notifyNewPatient(
+					patient.name,
+					patient.id,
+					vaEmails,
+					{
+						appointment: appointmentStr,
+						platform: platformLabel,
+					},
+				);
+			}
+		} catch (err) {
+			logger.error({ err, patientId: patient.id }, "Failed to send new patient notification emails");
 		}
 
 		return ServiceResponse.success("Patient created from webhook intake.", patient, StatusCodes.CREATED);
