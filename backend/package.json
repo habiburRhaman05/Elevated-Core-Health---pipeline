@@ -14,10 +14,7 @@
 		"start:prod": "node dist/index.js",
 		"seed": "node --import=tsx prisma/seed.ts",
 		"check": "biome check --write",
-		"test": "vitest run",
-		"test:cov": "vitest run --coverage",
-		"postinstall": "prisma generate",
-		"vercel-build": "npx prisma generate && npx tsup && mkdir -p api && cp dist/vercel-handler.js api/index.js"
+		"postinstall": "prisma generate"
 	},
 	"dependencies": {
 		"@prisma/adapter-pg": "^7.8.0",
