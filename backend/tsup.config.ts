@@ -2,7 +2,7 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: ["src/index.ts"],
-  format: ["esm"],          // ESM output
+  format: ["esm"],
   target: "node22",
   outDir: "dist",
   sourcemap: true,
@@ -10,7 +10,6 @@ export default defineConfig({
   bundle: true,
   splitting: false,
 
-  // 🔑 Externalize all node_modules + Prisma
   external: [
     "express",
     "@prisma/client",
@@ -24,7 +23,9 @@ export default defineConfig({
     "events",
     "path",
     "fs",
-    "url"
+    "url",
+    "pino-pretty",
+    "colorette"
   ],
 
   outExtension({ format }) {

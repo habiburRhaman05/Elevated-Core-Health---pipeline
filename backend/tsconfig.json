@@ -2,13 +2,14 @@
 	"compilerOptions": {
 		"target": "ESNext",
 		"module": "ESNext",
+		"noEmit": true,
 		"baseUrl": "./",
+"noImplicitAny": false,
 		"paths": {
 			"@/*": ["src/*"]
 		},
 		"moduleResolution": "Node",
 		"importsNotUsedAsValues": "remove",
-		"noEmit": true,
 		"strict": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
