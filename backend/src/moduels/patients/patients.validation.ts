@@ -41,6 +41,12 @@ export const FlagSchema = z.object({
 	}),
 });
 
+export const ClearFlagSchema = z.object({
+	body: z.object({
+		clearReason: z.string().min(1, "Clear reason is required").max(500, "Clear reason must be at most 500 characters"),
+	}),
+});
+
 export const IntakeSchema = z.object({
 	body: z.object({
 		name: z.string().trim().min(1, "Patient name is required"),
@@ -63,5 +69,6 @@ export type AssignInput = z.infer<typeof AssignSchema>["body"];
 export type ChecklistToggleInput = z.infer<typeof ChecklistToggleSchema>["body"];
 export type NotesInput = z.infer<typeof NotesSchema>["body"];
 export type FlagInput = z.infer<typeof FlagSchema>["body"];
+export type ClearFlagInput = z.infer<typeof ClearFlagSchema>["body"];
 export type IntakeInput = z.infer<typeof IntakeSchema>["body"];
 export type ClaimInput = z.infer<typeof ClaimSchema>["body"];

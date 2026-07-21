@@ -173,7 +173,8 @@ export function useFlagPatient() {
 export function useClearFlag() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => PatientsService.clearFlag(id),
+    mutationFn: ({ id, clearReason }: { id: string; clearReason: string }) =>
+      PatientsService.clearFlag(id, clearReason),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: QUERY_KEYS.PATIENTS.ALL })
       qc.invalidateQueries({ queryKey: QUERY_KEYS.DASHBOARD.SUMMARY })
@@ -182,6 +183,14 @@ export function useClearFlag() {
     onError: (err: any) => {
       toast.error(err?.response?.data?.message || "Failed to clear flag")
     },
+  })
+}
+
+export function useListVas() {
+  return useQuery({
+    queryKey: ["users", "vas"],
+    queryFn: () => PatientsService.listVas(),
+    staleTime: 5 * 60 * 1000,
   })
 }
 

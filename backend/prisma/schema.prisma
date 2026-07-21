@@ -33,9 +33,10 @@ model User {
   passwordResetExpires DateTime? @map("password_reset_expires")
   createdAt            DateTime  @default(now()) @map("created_at")
 
-  assignedPatients Patient[]     @relation("PatientAssignedTo")
-  flaggedPatients  Patient[]     @relation("PatientFlaggedBy")
-  updatedPatients  Patient[]     @relation("PatientUpdatedBy")
+  assignedPatients     Patient[]     @relation("PatientAssignedTo")
+  flaggedPatients      Patient[]     @relation("PatientFlaggedBy")
+  flagClearedPatients  Patient[]     @relation("PatientFlagClearedBy")
+  updatedPatients      Patient[]     @relation("PatientUpdatedBy")
   refreshTokens    RefreshToken[]
 
   @@map("users")
@@ -54,6 +55,9 @@ model Patient {
   flagReason          String?      @map("flag_reason")
   flaggedById         String?      @map("flagged_by")
   flaggedAt           DateTime?    @map("flagged_at")
+  flagClearedReason   String?      @map("flag_cleared_reason")
+  flagClearedById     String?      @map("flag_cleared_by")
+  flagClearedAt       DateTime?    @map("flag_cleared_at")
   source              String       @default("manual")
   bookingPlatform     String?      @map("booking_platform")
   appointmentDatetime DateTime?    @map("appointment_datetime")
@@ -62,9 +66,10 @@ model Patient {
   updatedById         String?      @map("updated_by")
   createdAt           DateTime     @default(now()) @map("created_at")
 
-  assignedUser  User?  @relation("PatientAssignedTo", fields: [assignedTo], references: [id])
-  flaggedByUser User?  @relation("PatientFlaggedBy", fields: [flaggedById], references: [id])
-  updatedByUser User?  @relation("PatientUpdatedBy", fields: [updatedById], references: [id])
+  assignedUser       User?  @relation("PatientAssignedTo", fields: [assignedTo], references: [id])
+  flaggedByUser      User?  @relation("PatientFlaggedBy", fields: [flaggedById], references: [id])
+  flagClearedByUser  User?  @relation("PatientFlagClearedBy", fields: [flagClearedById], references: [id])
+  updatedByUser      User?  @relation("PatientUpdatedBy", fields: [updatedById], references: [id])
 
   activityLogs ActivityLog[]
 

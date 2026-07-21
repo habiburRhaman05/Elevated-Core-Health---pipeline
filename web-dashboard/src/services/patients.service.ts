@@ -1,6 +1,6 @@
 import axiosInstance from "@/lib/axios"
 import { API_ENDPOINTS } from "@/constants"
-import type { ApiResponse, Patient, ChecklistItemDef } from "@/types"
+import type { ApiResponse, Patient, ChecklistItemDef, VaUser } from "@/types"
 
 export const PatientsService = {
   async list(stage?: string): Promise<Patient[]> {
@@ -59,9 +59,17 @@ export const PatientsService = {
     return data.data
   },
 
-  async clearFlag(id: string): Promise<Patient> {
+  async clearFlag(id: string, clearReason: string): Promise<Patient> {
     const { data } = await axiosInstance.patch<ApiResponse<Patient>>(
       `${API_ENDPOINTS.PATIENTS}/${id}/flag/clear`,
+      { clearReason },
+    )
+    return data.data
+  },
+
+  async listVas(): Promise<VaUser[]> {
+    const { data } = await axiosInstance.get<ApiResponse<VaUser[]>>(
+      "/users/vas",
     )
     return data.data
   },

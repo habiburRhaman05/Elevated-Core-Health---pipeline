@@ -10,6 +10,7 @@ import type {
 	AssignInput,
 	ChecklistToggleInput,
 	ClaimInput,
+	ClearFlagInput,
 	FlagInput,
 	IntakeInput,
 	NotesInput,
@@ -45,6 +46,7 @@ export const patientsService = {
 			include: {
 				assignedUser: { select: { id: true, name: true } },
 				flaggedByUser: { select: { id: true, name: true } },
+				flagClearedByUser: { select: { id: true, name: true } },
 			},
 		});
 		return ServiceResponse.success("Patients retrieved.", patients);
@@ -56,6 +58,7 @@ export const patientsService = {
 			include: {
 				assignedUser: { select: { id: true, name: true } },
 				flaggedByUser: { select: { id: true, name: true } },
+				flagClearedByUser: { select: { id: true, name: true } },
 				activityLogs: { orderBy: { createdAt: "desc" }, take: 50 },
 			},
 		});
@@ -66,6 +69,10 @@ export const patientsService = {
 	},
 
 	async moveStage(id: string, input: StageMoveInput, user: AuthenticatedUser) {
+		if (user.role === "admin") {
+			return ServiceResponse.failure("Admin cannot move stages. Assign a VA to move the patient.", null, StatusCodes.FORBIDDEN);
+		}
+
 		const patient = await prisma.patient.findUnique({ where: { id } });
 		if (!patient) {
 			return ServiceResponse.failure("Patient not found.", null, StatusCodes.NOT_FOUND);
@@ -202,8 +209,11 @@ export const patientsService = {
 		return ServiceResponse.success("Patient flagged.", updated);
 	},
 
-	async clearFlag(id: string, user: AuthenticatedUser) {
-		const patient = await prisma.patient.findUnique({ where: { id } });
+	async clearFlag(id: string, input: ClearFlagInput, user: AuthenticatedUser) {
+		const patient = await prisma.patient.findUnique({
+			where: { id },
+			include: { flaggedByUser: { select: { email: true, name: true } } },
+		});
 		if (!patient) {
 			return ServiceResponse.failure("Patient not found.", null, StatusCodes.NOT_FOUND);
 		}
@@ -215,12 +225,24 @@ export const patientsService = {
 				flagReason: null,
 				flaggedById: null,
 				flaggedAt: null,
+				flagClearedReason: input.clearReason,
+				flagClearedById: user.id,
+				flagClearedAt: new Date(),
 				updatedAt: new Date(),
 				updatedById: user.id,
 			},
 		});
 
-		await logActivity(id, user.name, "Flag cleared", "manual");
+		await logActivity(id, user.name, `Flag cleared — ${input.clearReason}`, "manual");
+
+		// Email the original flagger with Donna's feedback
+		try {
+			if (patient.flaggedByUser?.email) {
+				await emailService.notifyFlagCleared(patient.name, user.name, input.clearReason, patient.flaggedByUser.email);
+			}
+		} catch (err) {
+			logger.error({ err, patientId: id }, "Failed to send flag-cleared notification email");
+		}
 
 		return ServiceResponse.success("Flag cleared.", updated);
 	},

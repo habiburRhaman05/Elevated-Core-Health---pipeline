@@ -203,6 +203,34 @@ ${buttonHtml(resetUrl, "Reset Password")}
 	},
 
 	/**
+	 * Notify the VA who flagged that Donna has cleared the flag with feedback.
+	 */
+	async notifyFlagCleared(patientName: string, clearedBy: string, clearReason: string, vaEmail: string) {
+		const html = brandedWrapper(`
+<h2 style="margin:0 0 8px 0;font-size:20px;font-weight:700;color:#1A1B1E;">Flag Reviewed & Cleared</h2>
+<div style="background-color:#EBF7EC;border-left:4px solid #036638;border-radius:6px;padding:16px;margin-bottom:16px;">
+  <p style="margin:0;font-size:16px;font-weight:600;color:#036638;">${patientName}</p>
+  <p style="margin:6px 0 0 0;font-size:14px;color:#4B5563;">
+    <strong>Cleared by:</strong> ${clearedBy}
+  </p>
+  <p style="margin:4px 0 0 0;font-size:14px;color:#4B5563;">
+    <strong>Feedback:</strong> ${clearReason}
+  </p>
+</div>
+<p style="margin:0;font-size:14px;color:#6B7280;line-height:1.6;">
+  The flag you raised for this patient has been reviewed. No further action needed from you.
+</p>
+${buttonHtml(`${APP_URL}/dashboard/board`, "View Board")}
+`);
+
+		await sendResend({
+			to: vaEmail,
+			subject: `Flag cleared for ${patientName}`,
+			html,
+		});
+	},
+
+	/**
 	 * Notify Donna (admin) when a patient is flagged.
 	 */
 	async notifyFlagged(patientName: string, flaggedBy: string, reason: string, adminEmail: string) {

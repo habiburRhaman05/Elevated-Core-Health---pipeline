@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/auth/useAuth"
 import { useDashboard } from "@/hooks/query/useDashboard"
@@ -18,8 +19,10 @@ import {
   BarChart3,
   User,
   Loader2,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import type { Patient } from "@/types"
 
@@ -30,6 +33,16 @@ export default function AdminDashboardPage() {
   const { data: patients } = usePatients()
   const { data: analytics } = useAdminAnalytics()
   const clearFlagMutation = useClearFlag()
+
+  const [clearingPatientId, setClearingPatientId] = useState<string | null>(null)
+  const [clearReasonInput, setClearReasonInput] = useState("")
+
+  const handleClearWithReason = async () => {
+    if (!clearingPatientId || !clearReasonInput.trim()) return
+    await clearFlagMutation.mutateAsync({ id: clearingPatientId, clearReason: clearReasonInput })
+    setClearingPatientId(null)
+    setClearReasonInput("")
+  }
 
   const totalPatients = patients?.length || 0
   const patientsByStage =
@@ -154,10 +167,57 @@ export default function AdminDashboardPage() {
                 <FlaggedPatientRow
                   key={patient.id}
                   patient={patient}
-                  onClearFlag={clearFlagMutation.mutate}
-                  isClearing={clearFlagMutation.isPending}
+                  onClearFlag={(id) => setClearingPatientId(id)}
+                  isClearing={clearFlagMutation.isPending && clearingPatientId === patient.id}
                 />
               ))}
+          </div>
+        </div>
+      )}
+
+      {/* Clear Flag with Reason Modal */}
+      {clearingPatientId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => { setClearingPatientId(null); setClearReasonInput("") }} />
+          <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-base font-bold text-[#1A1B1E]">Clear Flag</h3>
+                <p className="text-xs text-[#6B7280] mt-0.5">
+                  Provide feedback to the VA who flagged this patient
+                </p>
+              </div>
+              <button
+                onClick={() => { setClearingPatientId(null); setClearReasonInput("") }}
+                className="p-1 rounded-lg hover:bg-gray-100 text-[#6B7280]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <Textarea
+              placeholder="Explain why you're clearing this flag (this will be emailed to the VA)..."
+              value={clearReasonInput}
+              onChange={(e) => setClearReasonInput(e.target.value)}
+              className="text-sm min-h-[80px] mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setClearingPatientId(null); setClearReasonInput("") }}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleClearWithReason}
+                disabled={!clearReasonInput.trim() || clearFlagMutation.isPending}
+                className="bg-[#036638] hover:bg-[#02804A] text-white text-xs"
+              >
+                {clearFlagMutation.isPending ? "Clearing..." : "Confirm Clear"}
+              </Button>
+            </div>
           </div>
         </div>
       )}

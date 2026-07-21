@@ -71,7 +71,7 @@ export const patientsController = {
 			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, 401), res);
 			return;
 		}
-		const serviceResponse = await patientsService.clearFlag(paramId(req), req.user);
+		const serviceResponse = await patientsService.clearFlag(paramId(req), req.body, req.user);
 		handleServiceResponse(serviceResponse, res);
 	},
 

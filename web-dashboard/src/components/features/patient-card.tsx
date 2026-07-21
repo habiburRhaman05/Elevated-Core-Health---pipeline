@@ -2,10 +2,10 @@
 
 import type { Patient, PatientStage } from "@/types"
 import { STAGE_ORDER, STAGE_LABELS } from "@/types"
-import { AlertTriangle, Flag, Clock, ArrowLeft, ArrowRight, CheckSquare, Square, Lock } from "lucide-react"
+import { AlertTriangle, Flag, Clock, ArrowLeft, ArrowRight, CheckSquare, Square, Lock, Phone } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { STALE_HOURS } from "@/constants"
-import { useChecklistItems } from "@/hooks/query/usePatients"
+import { useChecklistItems, useListVas, useAssignPatient } from "@/hooks/query/usePatients"
 import { useAuth } from "@/hooks/auth/useAuth"
 
 interface PatientCardProps {
@@ -40,6 +40,8 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
   const canRetreat = currentIdx > 0
   const { data: checklistDefs } = useChecklistItems()
   const { user: currentUser } = useAuth()
+  const { data: vaList } = useListVas()
+  const assignPatient = useAssignPatient()
 
   // — Checklist progress for this stage —
   const stageDefs = checklistDefs?.filter((d) => d.stage === patient.stage) || []
@@ -50,11 +52,9 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
   const progressPct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 100
 
   // — Assignment-gated stage changes —
-  // Only the assigned VA can move stages. Admin can always move.
-  // Unassigned patients cannot be moved by anyone except admin.
   const isAdmin = currentUser?.role === "admin"
   const isAssignedUser = !!patient.assignedTo && patient.assignedTo === currentUser?.id
-  const canMoveStage = isAdmin || isAssignedUser
+  const canMoveStage = !isAdmin && isAssignedUser
 
   return (
     <div
@@ -63,51 +63,73 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       className={cn(
-        "bg-white rounded-lg border p-3.5 transition-all duration-150",
+        "bg-white rounded-lg border p-3.5 transition-all duration-150 relative",
         canMoveStage ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
         "hover:shadow-md hover:border-[#F2994A]/40 hover:-translate-y-0.5",
         "active:shadow-sm active:translate-y-0",
         stale
           ? "border-amber-300 shadow-[0_0_0_1px_#FDE68A]"
           : "border-[#E5E7EB]",
-        patient.isFlagged && "border-l-[3px] border-l-[#E8792E]",
+        patient.isFlagged && "bg-[#FFFAF5] border-[#E8792E] border-l-[3px] shadow-[0_0_0_1px_#E8792E]/20",
         isDragging && "opacity-50 scale-95 shadow-lg rotate-2",
       )}
     >
       {/* — Header: Name + badges — */}
       <div className="flex items-start justify-between mb-2 gap-2">
-        <div className="flex flex-col gap-y-2">
-          <h1 className="text-sm font-semibold text-[#1A1B1E] leading-tight truncate flex-1">
-          {patient.name}
-         
-        </h1>
-        <h1 className="text-sm font-semibold text-[#1A1B1E]   flex-1">
-          {patient.email}
-         
-        </h1>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <h1 className="text-sm font-semibold text-[#1A1B1E] leading-tight truncate">
+              {patient.name}
+            </h1>
+            {patient.bookingPlatform && (
+              <span className="text-[9px] font-medium text-[#6B7280] bg-[#F3F4F6] px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                {patient.bookingPlatform}
+              </span>
+            )}
+            <span className="text-[9px] font-medium text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded-full">
+              {patient.source === "webhook" ? "Web" : "Manual"}
+            </span>
+          </div>
+          {patient.email && (
+            <p className="text-[11px] text-[#6B7280] truncate mt-0.5">{patient.email}</p>
+          )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           {patient.isFlagged && (
-            <Flag className="w-3.5 h-3.5 text-[#E8792E]" fill="#E8792E" />
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#E8792E]/10 border border-[#E8792E]/20 text-[9px] font-semibold text-[#E8792E]">
+              <Flag className="w-2.5 h-2.5" fill="#E8792E" />
+              Flagged
+            </span>
           )}
           {stale && (
-            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[9px] font-semibold text-amber-600">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              Stale
+            </span>
           )}
         </div>
       </div>
 
-      {/* — Appointment — */}
-      {patient.appointmentDatetime && (
-        <p className="text-[11px] text-[#6B7280] mb-1.5 flex items-center gap-1">
-          <Clock className="w-3 h-3" />
-          {new Date(patient.appointmentDatetime).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          })}
-        </p>
-      )}
+      {/* — Info row: appointment + phone — */}
+      <div className="flex items-center gap-3 mb-1.5 flex-wrap">
+        {patient.appointmentDatetime && (
+          <p className="text-[11px] text-[#6B7280] flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {new Date(patient.appointmentDatetime).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </p>
+        )}
+        {patient.phone && (
+          <p className="text-[11px] text-[#6B7280] flex items-center gap-1">
+            <Phone className="w-3 h-3" />
+            {patient.phone}
+          </p>
+        )}
+      </div>
 
       {/* — Assigned user — */}
       {patient.assignedUser ? (
@@ -236,11 +258,33 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
             )}
           </div>
         ) : (
-          /* Not assigned — show lock indicator */
-          <div className="flex items-center gap-1 text-[10px] text-gray-400" title="Only the assigned VA can move this patient">
-            <Lock className="w-3 h-3" />
-            <span>{patient.assignedTo ? "Not your patient" : "Unassigned"}</span>
-          </div>
+          /* Admin can assign, or non-assigned see lock */
+          isAdmin ? (
+            <div className="relative inline-block w-[110px]" onClick={(e) => e.stopPropagation()}>
+              <select
+                onChange={(e) => {
+                  const val = e.target.value
+                  if (val) assignPatient.mutate({ id: patient.id, assignedTo: val })
+                  e.target.value = ""
+                }}
+                value=""
+                className="appearance-none w-full text-[10px] border border-[#E5E7EB] rounded px-2 py-0.5 pr-6 text-[#1A1B1E] bg-white cursor-pointer hover:border-[#F2994A]/40 focus:outline-none focus:ring-1 focus:ring-[#E8792E]"
+                title="Assign VA"
+              >
+                <option value="">{patient.assignedTo ? "Reassign..." : "Assign VA..."}</option>
+                {vaList?.filter(v => v.id !== currentUser?.id).map((va) => (
+                  <option key={va.id} value={va.id}>
+                    {va.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-[10px] text-gray-400" title="Only the assigned VA can move this patient">
+              <Lock className="w-3 h-3" />
+              <span>{patient.assignedTo ? "Not your patient" : "Unassigned"}</span>
+            </div>
+          )
         )}
       </div>
     </div>

@@ -41,6 +41,9 @@ export interface Patient {
   flagReason?: string | null
   flaggedByUser?: Pick<User, "id" | "name"> | null
   flaggedAt?: string | null
+  flagClearedReason?: string | null
+  flagClearedByUser?: Pick<User, "id" | "name"> | null
+  flagClearedAt?: string | null
   source: string
   bookingPlatform?: string | null
   appointmentDatetime?: string | null
@@ -86,6 +89,12 @@ export interface PaginatedResponse<T> {
   page: number
   limit: number
   totalPages: number
+}
+
+export interface VaUser {
+  id: string
+  name: string
+  email: string
 }
 
 export interface AdminAnalytics {

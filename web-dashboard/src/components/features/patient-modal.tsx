@@ -8,10 +8,11 @@ import {
   X,
   Flag,
   Clock,
-  ChevronRight,
   Check,
   AlertTriangle,
   MessageSquare,
+  UserCheck,
+  ChevronDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -26,6 +27,7 @@ import {
   useClaimPatient,
   useAssignPatient,
   useChecklistItems,
+  useListVas,
 } from "@/hooks/query/usePatients"
 import { usePatient } from "@/hooks/query/usePatients"
 import { useActivityLog } from "@/hooks/query/useActivityLog"
@@ -80,9 +82,13 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 100
   const allComplete = totalItems === 0 || completedItems === totalItems
 
+  const { data: vaList } = useListVas()
+
   const [notesText, setNotesText] = useState("")
   const [flagReason, setFlagReason] = useState("")
   const [showFlagInput, setShowFlagInput] = useState(false)
+  const [clearReason, setClearReason] = useState("")
+  const [showClearInput, setShowClearInput] = useState(false)
   const [savingNotes, setSavingNotes] = useState(false)
 
   useEffect(() => {
@@ -90,6 +96,8 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
     else setNotesText("")
     setShowFlagInput(false)
     setFlagReason("")
+    setShowClearInput(false)
+    setClearReason("")
   }, [patient?.id, patient?.notes])
 
   const handleSaveNotes = async () => {
@@ -107,8 +115,10 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   }
 
   const handleClearFlag = async () => {
-    if (!patient) return
-    await clearFlag.mutateAsync(patient.id)
+    if (!patient || !clearReason.trim()) return
+    await clearFlag.mutateAsync({ id: patient.id, clearReason })
+    setShowClearInput(false)
+    setClearReason("")
   }
 
   const handleMoveStage = async (target: PatientStage) => {
@@ -190,11 +200,12 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                     const isComplete = idx < currentIdx
                     const isCurrent = stage === patient.stage
                     const isFuture = idx > currentIdx + 1
+                    const isClickable = !isFuture
                     return (
                       <button
                         key={stage}
-                        onClick={() => handleMoveStage(stage)}
-                        disabled={moveStage.isPending || isFuture}
+                        onClick={() => isClickable && handleMoveStage(stage)}
+                        disabled={moveStage.isPending || !isClickable}
                         title={
                           isFuture
                             ? "Complete the current stage first"
@@ -362,41 +373,50 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                 </div>
               </div>
 
-              {/* Flag Section */}
-              {patient.isFlagged ? (
+              {/* Flag for Donna Section — VA's flag message */}
+              {patient.isFlagged && (
                 <div className="bg-[#FEF2F2] border border-red-100 rounded-lg p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-[#E8792E] flex items-center gap-1.5">
-                        <Flag className="w-3.5 h-3.5" fill="#E8792E" />
-                        Flagged for Donna
-                      </p>
-                      {patient.flagReason && (
-                        <p className="text-sm text-[#1A1B1E] mt-1">
-                          {patient.flagReason}
-                        </p>
-                      )}
-                      {patient.flaggedByUser && (
-                        <p className="text-[11px] text-[#6B7280] mt-1">
-                          by {patient.flaggedByUser.name}
-                          {patient.flaggedAt &&
-                            ` · ${new Date(patient.flaggedAt).toLocaleString()}`}
-                        </p>
-                      )}
-                    </div>
-                    {isAdmin && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleClearFlag}
-                        className="text-xs h-7 text-[#E8792E] hover:text-red-700 hover:bg-red-50"
-                      >
-                        Clear Flag
-                      </Button>
-                    )}
-                  </div>
+                  <p className="text-xs font-semibold text-[#E8792E] flex items-center gap-1.5">
+                    <Flag className="w-3.5 h-3.5" fill="#E8792E" />
+                    Flag for Donna — Reason
+                  </p>
+                  {patient.flagReason && (
+                    <p className="text-sm text-[#1A1B1E] mt-1">
+                      {patient.flagReason}
+                    </p>
+                  )}
+                  {patient.flaggedByUser && (
+                    <p className="text-[11px] text-[#6B7280] mt-1">
+                      by {patient.flaggedByUser.name}
+                      {patient.flaggedAt &&
+                        ` · ${new Date(patient.flaggedAt).toLocaleString()}`}
+                    </p>
+                  )}
                 </div>
-              ) : (
+              )}
+
+              {/* Donna's Response Section — when flag has been cleared */}
+              {patient.flagClearedReason && (
+                <div className="bg-[#EBF7EC] border border-[#65BD6C]/30 rounded-lg p-3">
+                  <p className="text-xs font-semibold text-[#036638] flex items-center gap-1.5">
+                    <Check className="w-3.5 h-3.5" />
+                    Donna's Response
+                  </p>
+                  <p className="text-sm text-[#1A1B1E] mt-1">
+                    {patient.flagClearedReason}
+                  </p>
+                  {patient.flagClearedByUser && (
+                    <p className="text-[11px] text-[#6B7280] mt-1">
+                      by {patient.flagClearedByUser.name}
+                      {patient.flagClearedAt &&
+                        ` · ${new Date(patient.flagClearedAt).toLocaleString()}`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Flag Controls */}
+              {!isAdmin && !patient.isFlagged ? (
                 <div>
                   {showFlagInput ? (
                     <div className="space-y-2">
@@ -430,30 +450,101 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                       variant="outline"
                       size="sm"
                       onClick={() => setShowFlagInput(true)}
-                      className="text-xs gap-1.5 border-[#E8792E]/30 text-[#E8792E] hover:bg-[#FEF2F2]"
+                      className="text-xs gap-1.5 border-[#E8792E]/30 text-[#E8792E] hover:bg-[#FFF0E5] hover:border-[#E8792E]/60 transition-colors"
                     >
                       <Flag className="w-3.5 h-3.5" />
                       Flag for Donna
                     </Button>
                   )}
                 </div>
-              )}
+              ) : isAdmin && patient.isFlagged && !showClearInput ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowClearInput(true)}
+                  className="text-xs gap-1.5 border-red-200 text-red-600 hover:bg-red-50"
+                >
+                  Clear Flag with Feedback
+                </Button>
+              ) : null}
 
-              {/* Claim / Assign */}
-              {!patient.assignedUser && user?.role === "va" && (
-                <div>
-                  <Button
-                    size="sm"
-                    onClick={handleClaim}
-                    disabled={claimPatient.isPending}
-                    className="bg-[#E8792E] hover:bg-[#D4691F] text-white text-xs"
-                  >
-                    {claimPatient.isPending ? "Claiming..." : "Claim Patient"}
-                  </Button>
+              {/* Clear Flag with Reason dialog (admin only) */}
+              {isAdmin && showClearInput && (
+                <div className="space-y-2">
+                  <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider">
+                    Provide Feedback to VA
+                  </p>
+                  <Textarea
+                    placeholder="Explain why you're clearing this flag (sent to the VA who flagged)..."
+                    value={clearReason}
+                    onChange={(e) => setClearReason(e.target.value)}
+                    className="text-sm min-h-[60px]"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handleClearFlag}
+                      disabled={!clearReason.trim() || clearFlag.isPending}
+                      className="bg-[#036638] hover:bg-[#02804A] text-white text-xs"
+                    >
+                      {clearFlag.isPending ? "Clearing..." : "Confirm Clear"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => { setShowClearInput(false); setClearReason("") }}
+                      className="text-xs"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
               )}
 
-              {/* Notes */}
+              {/* Claim / Assign — show dropdown for VAs, simple claim for unassigned */}
+              {(isAdmin || (!patient.assignedUser && user?.role === "va")) && vaList && (
+                <div>
+                  <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider mb-2">
+                    Assign Patient
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {!isAdmin && (
+                      <Button
+                        size="sm"
+                        onClick={handleClaim}
+                        disabled={claimPatient.isPending}
+                        className="bg-[#E8792E] hover:bg-[#D4691F] text-white text-xs"
+                      >
+                        <UserCheck className="w-3.5 h-3.5 mr-1" />
+                        {claimPatient.isPending ? "Claiming..." : "Assign to Me"}
+                      </Button>
+                    )}
+                    <div className="relative inline-block">
+                      <select
+                        onChange={(e) => {
+                          const val = e.target.value
+                          if (val) {
+                            assignPatient.mutate({ id: patient.id, assignedTo: val })
+                          }
+                          e.target.value = ""
+                        }}
+                        value=""
+                        className="appearance-none text-xs border border-[#E5E7EB] rounded-md px-3 py-1.5 pr-8 text-[#1A1B1E] bg-white cursor-pointer hover:border-[#F2994A]/40 focus:outline-none focus:ring-1 focus:ring-[#E8792E]"
+                      >
+                        <option value="">Assign to VA...</option>
+                        {vaList.filter((v) => v.id !== user?.id).map((va) => (
+                          <option key={va.id} value={va.id}>
+                            {va.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3 h-3 text-[#6B7280] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Operational Notes */}
               <div>
                 <p className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider mb-2">
                   Operational Notes
@@ -484,27 +575,46 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
                   <MessageSquare className="w-3 h-3" />
                   Activity Log
                 </p>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
                   {logData?.logs && logData.logs.length > 0 ? (
-                    logData.logs.map((log) => (
-                      <div
-                        key={log.id}
-                        className="flex items-start gap-2 text-xs py-1.5 border-b border-[#E5E7EB]/30 last:border-0"
-                      >
-                        <span className="text-[10px] text-[#6B7280] whitespace-nowrap">
-                          {new Date(log.createdAt).toLocaleString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                        <span className="font-medium text-[#E8792E] min-w-fit">
-                          {log.author}:
-                        </span>
-                        <span className="text-[#374151]">{log.message}</span>
-                      </div>
-                    ))
+                    logData.logs.map((log) => {
+                      const isAdminMessage = log.author === "Donna Rhodes" || log.author.toLowerCase() === "admin"
+                      return (
+                        <div
+                          key={log.id}
+                          className={cn(
+                            "flex items-start gap-2.5 text-xs py-2 px-2.5 rounded-md mb-1 transition-colors border-b",
+                            isAdminMessage 
+                              ? "bg-[#FFF0E5]/80 border-[#F2994A]/20 shadow-sm" 
+                              : "border-[#E5E7EB]/30 hover:bg-gray-50/50"
+                          )}
+                        >
+                          <span className={cn(
+                            "text-[10px] whitespace-nowrap pt-0.5 min-w-[70px]",
+                            isAdminMessage ? "text-[#E8792E] font-medium" : "text-[#9CA3AF]"
+                          )}>
+                            {new Date(log.createdAt).toLocaleString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          <div className="flex flex-col gap-0.5 w-full">
+                            <span className={cn(
+                              "font-bold",
+                              isAdminMessage ? "text-[#D4691F]" : "text-[#E8792E]"
+                            )}>
+                              {log.author}
+                            </span>
+                            <span className={cn(
+                              "leading-relaxed",
+                              isAdminMessage ? "text-[#1A1B1E] font-medium" : "text-[#4B5563]"
+                            )}>{log.message}</span>
+                          </div>
+                        </div>
+                      )
+                    })
                   ) : (
                     <p className="text-xs text-[#6B7280] italic">No activity yet</p>
                   )}
