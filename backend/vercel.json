@@ -1,18 +1,22 @@
 {
   "version": 2,
-  "installCommand": "pnpm install",
-  "buildCommand": "pnpm prisma generate && pnpm tsup",
-  "outputDirectory": "dist",
   "builds": [
     {
-      "src": "dist/vercel.js",
-      "use": "@vercel/node"
+      "src": "api/index.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "node_modules/.prisma/**",
+          "node_modules/@prisma/client/**",
+          "node_modules/.prisma/client/**"
+        ]
+      }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/dist/vercel.js"
+      "dest": "/api/index.js"
     }
   ]
 }
