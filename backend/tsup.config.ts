@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/vercel.ts"],
   format: ["esm"],
   target: "node22",
   outDir: "dist",
@@ -31,5 +31,9 @@ export default defineConfig({
   outExtension({ format }) {
     if (format === "esm") return { js: ".js" };
     return {};
+  },
+  // Vercel needs the vercel entry to be importable
+  banner: {
+    js: "",
   },
 });

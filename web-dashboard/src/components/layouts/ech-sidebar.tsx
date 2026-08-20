@@ -94,11 +94,11 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
 
   return (
     <aside className={cn(
-      "shrink-0 bg-[#0F1115]/90 backdrop-blur-2xl flex flex-col h-screen fixed left-0 top-0 z-30 transition-all duration-300 border-r border-white/10 shadow-[4px_0_24px_rgba(0,0,0,0.2)]",
+      "shrink-0 bg-[#F0F6F2] flex flex-col h-screen fixed left-0 top-0 z-30 transition-all duration-300 border-r border-[#036638]/15 shadow-[4px_0_24px_rgba(3,102,56,0.08)]",
       isCollapsed ? "w-20" : "w-64"
     )}>
       <div className={cn(
-        "flex items-center justify-between border-b border-white/5 relative transition-all duration-300 px-3",
+        "flex items-center justify-between border-b border-[#036638]/10 relative transition-all duration-300 px-3",
         isCollapsed ? "h-20 w-20" : "h-20 w-64"
       )}>
         <div className={cn(
@@ -125,10 +125,9 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
               <p className="text-[#65BD6C] text-[8px] font-semibold uppercase tracking-widest leading-tight mt-0.5">Care Dashboard</p>
             </div>
           )}
-        </div>
-        <button
+        </div>        <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-[#2D3139] border border-white/10 rounded-full items-center justify-center text-gray-400 hover:text-white hover:bg-[#3E434D] transition-colors z-40 hidden lg:flex"
+          className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-[#E5E7EB] border border-[#036638]/20 rounded-full items-center justify-center text-[#374151] hover:text-[#036638] hover:bg-[#D1FAE5] transition-colors z-40 hidden lg:flex"
           title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
@@ -137,7 +136,7 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
           <button
             onClick={onMobileClose}
             aria-label="Close menu"
-            className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-gray-300 hover:text-white hover:bg-white/10 active:bg-white/15 transition-colors"
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-[#374151] hover:text-[#036638] hover:bg-[#036638]/10 active:bg-[#036638]/15 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -149,7 +148,7 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
           <div key={section.section} className="space-y-2">
             {/* Section Header */}
             {!isCollapsed && (
-              <h3 className="px-3 py-1.5 text-xs font-bold uppercase tracking-widest text-[#65BD6C]/70 transition-all duration-200">
+              <h3 className="px-3 py-1.5 text-xs font-bold uppercase tracking-widest text-[#036638]/60 transition-all duration-200">
                 {section.section}
               </h3>
             )}
@@ -167,15 +166,15 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
                       "flex items-center rounded-lg text-sm font-medium transition-all duration-200 group",
                       isCollapsed ? "justify-center px-0 py-2.5" : "px-3 py-2 gap-3",
                       isActive
-                        ? "bg-gradient-to-r from-[#036638] to-[#025030] text-white shadow-[0_4px_12px_rgba(3,102,56,0.25)] border border-[#65BD6C]/20"
-                        : "text-[#9CA3AF] hover:text-white hover:bg-white/5 border border-transparent hover:border-white/10",
+                        ? "bg-[#036638] text-white shadow-[0_2px_8px_rgba(3,102,56,0.2)] border border-[#036638]"
+                        : "text-[#374151] hover:text-[#036638] hover:bg-[#036638]/8 border border-transparent hover:border-[#036638]/15",
                     )}
                     title={isCollapsed ? item.label : undefined}
                   >
                     <Icon
                       className={cn(
                         "w-5 h-5 flex-shrink-0 transition-all duration-200",
-                        isActive ? "text-[#65BD6C]" : "group-hover:scale-110"
+                        isActive ? "text-white" : "text-[#036638] group-hover:scale-110"
                       )}
                       strokeWidth={1.8}
                     />
@@ -192,7 +191,7 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
         ))}
       </nav>
 
-      <div className="p-3 border-t border-white/5 bg-gradient-to-t from-[#0F1115] to-transparent space-y-3">
+      <div className="p-3 border-t border-[#036638]/10 space-y-3">
         {/* Profile Card */}
         <Link
           href={profileRoute}
@@ -201,15 +200,15 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
             "flex items-center rounded-lg transition-all duration-200 group",
             isCollapsed ? "justify-center px-0 py-2.5" : "gap-3 px-2.5 py-2.5 border",
             isProfileActive
-              ? "bg-gradient-to-r from-[#036638]/20 to-[#025030]/10 border-[#65BD6C]/30"
-              : "border-white/5 hover:border-white/10 hover:bg-white/5",
+              ? "bg-[#036638]/10 border-[#036638]/30"
+              : "border-[#036638]/10 hover:border-[#036638]/25 hover:bg-[#036638]/5",
           )}
         >
           <div className={cn(
-            "w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 border font-semibold text-white transition-all duration-200 overflow-hidden",
+            "w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 border font-semibold transition-all duration-200 overflow-hidden",
             isProfileActive
-              ? "bg-gradient-to-br from-[#036638] to-[#025030] border-[#65BD6C]/50"
-              : "bg-gradient-to-br from-[#1F2937] to-[#111827] border-white/10 group-hover:border-[#65BD6C]/50",
+              ? "bg-[#036638] text-white border-[#036638]"
+              : "bg-[#036638]/10 text-[#036638] border-[#036638]/20 group-hover:border-[#036638]/50",
           )}>
             {user?.avatar ? (
               // eslint-disable-next-line @next/next/no-img-element -- remote avatar, no static optimization needed
@@ -220,10 +219,10 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
           </div>
           {!isCollapsed && (
             <div className="min-w-0 flex-1">
-              <p className="text-gray-100 text-sm font-semibold truncate leading-tight">
+              <p className="text-[#111827] text-sm font-semibold truncate leading-tight">
                 {user?.name}
               </p>
-              <p className="text-[#9CA3AF] text-[10px] truncate uppercase font-bold tracking-wide mt-1">
+              <p className="text-[#036638]/70 text-[10px] truncate uppercase font-bold tracking-wide mt-1">
                 {roleLabel(user?.role)}
               </p>
             </div>
@@ -237,8 +236,8 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
           className={cn(
             "w-full h-8 text-xs font-medium transition-all duration-200 border",
             isCollapsed
-              ? "px-0 justify-center bg-red-500/20 hover:bg-red-500/30 border-red-500/30 text-red-300 hover:text-red-200"
-              : "justify-start gap-2.5 px-2.5 bg-red-500/10 hover:bg-red-500/20 border-red-500/20 text-red-300 hover:text-red-200",
+              ? "px-0 justify-center bg-red-50 text-red-600 hover:bg-red-100 border-red-200 hover:text-red-700"
+              : "justify-start gap-2.5 px-2.5 bg-red-50 text-red-600 hover:bg-red-100 border-red-200 hover:text-red-700",
           )}
           title={isCollapsed ? "Sign out" : undefined}
         >
