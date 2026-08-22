@@ -10,7 +10,6 @@
 	"type": "module",
 	"scripts": {
 		"build": "prisma generate && tsc && tsup",
-		"vercel-build": "prisma generate && tsup",
 		"dev": "prisma generate && tsx watch src/index.ts",
 		"start": "node dist/index.js",
 		"start:prod": "node dist/index.js",
