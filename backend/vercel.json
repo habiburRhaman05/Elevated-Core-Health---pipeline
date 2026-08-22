@@ -1,18 +1,5 @@
 {
-  "version": 2,
-  "installCommand": "pnpm install",
-  "buildCommand": "pnpm prisma generate && pnpm tsup",
-  "outputDirectory": "dist",
-  "builds": [
-    {
-      "src": "dist/vercel.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/dist/vercel.js"
-    }
-  ]
+	"installCommand": "pnpm install",
+	"buildCommand": "pnpm prisma generate && pnpm tsup",
+	"rewrites": [{ "source": "/(.*)", "destination": "/api" }]
 }
