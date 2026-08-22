@@ -1,5 +1,5 @@
 {
-	"installCommand": "npm install",
+	"installCommand": "npm install --include=dev",
 	"buildCommand": "npx prisma generate && npx tsup",
 	"rewrites": [{ "source": "/(.*)", "destination": "/api" }]
 }
