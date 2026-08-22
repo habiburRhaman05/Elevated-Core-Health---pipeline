@@ -1,5 +1,4 @@
 {
-<<<<<<< Updated upstream
   "version": 2,
   "installCommand": "pnpm install",
   "buildCommand": "pnpm prisma generate && pnpm tsup",
@@ -16,9 +15,4 @@
       "dest": "/dist/vercel.js"
     }
   ]
-=======
-	"$schema": "https://openapi.vercel.sh/vercel.json",
-	"buildCommand": "npm run build",
-	"rewrites": [{ "source": "/(.*)", "destination": "/api" }]
->>>>>>> Stashed changes
 }
