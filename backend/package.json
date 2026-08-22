@@ -10,6 +10,7 @@
 	"type": "module",
 	"scripts": {
 		"build": "prisma generate && tsc && tsup",
+		"vercel-build": "prisma generate && tsup",
 		"dev": "prisma generate && tsx watch src/index.ts",
 		"start": "node dist/index.js",
 		"start:prod": "node dist/index.js",
@@ -60,21 +61,6 @@
 		"typescript": "5.9.2",
 		"vite-tsconfig-paths": "5.1.4",
 		"vitest": "3.2.4"
-	},
-	"tsup": {
-		"entry": [
-			"src/index.ts",
-			"src/vercel-handler.ts"
-		],
-		"outDir": "dist",
-		"format": [
-			"cjs"
-		],
-		"target": "es2020",
-		"sourcemap": true,
-		"clean": true,
-		"splitting": false,
-		"skipNodeModulesBundle": true
 	},
 	"packageManager": "pnpm@10.33.0"
 }

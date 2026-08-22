@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 /**
  * Vercel Serverless Entry Point
  *
@@ -16,4 +17,14 @@ import { app } from "@/server";
 
 // Vercel expects a default export of the request handler.
 // Express app itself is a valid handler — Vercel calls it as (req, res).
+=======
+// Vercel's single entry point for every request (see vercel.json's catch-all
+// rewrite). Deliberately imports the already-bundled dist output, not raw
+// src/ — Vercel's own function bundler doesn't understand the "@/*" path
+// aliases used throughout src/, but tsup already resolved those when it
+// produced dist/vercel-handler.js during the build step (npm run build /
+// vercel-build), so this file only ever needs a plain relative import.
+import app from "../dist/vercel-handler.js";
+
+>>>>>>> Stashed changes
 export default app;
