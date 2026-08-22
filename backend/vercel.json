@@ -1,5 +1,5 @@
 {
-	"installCommand": "pnpm install",
-	"buildCommand": "pnpm prisma generate && pnpm tsup",
+	"installCommand": "npm install",
+	"buildCommand": "npm run build",
 	"rewrites": [{ "source": "/(.*)", "destination": "/api" }]
 }
