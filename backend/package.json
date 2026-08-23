@@ -16,9 +16,8 @@
 		"start": "node dist/index.js",
 		"start:prod": "node dist/index.js",
 		"seed": "node --import=tsx prisma/seed.ts",
-		"check": "biome check --write",
-		"test": "vitest run",
-		"test:cov": "vitest run --coverage"
+		"check": "biome check --write"
+		
 	},
 	"dependencies": {
 		"@prisma/adapter-pg": "^7.8.0",
@@ -63,6 +62,5 @@
 		"typescript": "5.9.2",
 		"vite-tsconfig-paths": "5.1.4",
 		"vitest": "3.2.4"
-	},
-	"packageManager": "pnpm@10.33.0"
+	}
 }
