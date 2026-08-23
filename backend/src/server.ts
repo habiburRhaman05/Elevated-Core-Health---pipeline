@@ -11,18 +11,18 @@ export { app, logger };
 
 const httpServer = createServer(app);
 
-const server = httpServer.listen(env.PORT, async () => {
-	await connectToDatabase();
-	const { NODE_ENV, HOST, PORT } = env;
-	console.log(`ECH Pipeline Portal (${NODE_ENV}) running on http://${HOST}:${PORT}`);
-});
+// const server = httpServer.listen(env.PORT, async () => {
+// 	await connectToDatabase();
+// 	const { NODE_ENV, HOST, PORT } = env;
+// 	console.log(`ECH Pipeline Portal (${NODE_ENV}) running on http://${HOST}:${PORT}`);
+// });
 
 const onCloseSignal = () => {
 	console.log("sigint received, shutting down");
-	server.close(() => {
-		console.log("server closed");
-		process.exit();
-	});
+	// server.close(() => {
+	// 	console.log("server closed");
+	// 	process.exit();
+	// });
 	setTimeout(() => process.exit(1), 10000).unref();
 };
 

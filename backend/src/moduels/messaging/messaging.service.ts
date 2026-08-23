@@ -2,7 +2,13 @@ import { StatusCodes } from "http-status-codes";
 
 import { audit, type RequestContext } from "@/lib/audit";
 import { normalizeE164 } from "@/lib/phone";
-import { isQuoConfigured, QuoApiError, sendMessage as quoSendMessage } from "@/lib/quo";
+import {
+	isQuoConfigured,
+	QuoApiError,
+	sendMessage as quoSendMessage,
+	listQuoConversations,
+	listQuoMessages,
+} from "@/lib/quo";
 import type { AuthenticatedUser } from "@/lib/types";
 import { env } from "@/utils/envConfig";
 import { logger } from "@/utils/logger";
@@ -58,6 +64,106 @@ function conversationDto(conversation: ConversationWithPatient) {
 
 const PATIENT_SELECT = { id: true, firstName: true, lastName: true } as const;
 
+/**
+ * Pulls conversations and messages from Quo's API and upserts them into the
+ * local DB. This ensures the dashboard shows existing Quo data even if no
+ * webhooks have fired yet. Sync is idempotent — running it multiple times
+ * won't create duplicates (upserts by quoMessageId / phoneNumber).
+ */
+/**
+ * Last time syncFromQuo ran — prevents hammering the Quo API on every
+ * request. Cooldown: 60 seconds.
+ */
+let lastSyncAt = 0;
+const SYNC_COOLDOWN_MS = 60_000;
+
+/**
+ * Pulls conversation metadata from Quo's API and upserts them into the
+ * local DB. This is FAST — it only fetches conversation list (no messages).
+ * Message sync happens per-thread when getMessages is called.
+ *
+ * Designed to be fire-and-forget (never awaited on the hot path).
+ * Errors are logged but never block the user.
+ */
+async function syncConversationsFromQuo(): Promise<void> {
+	if (!isQuoConfigured || !env.QUO_FROM_NUMBER || !env.QUO_USER_ID) return;
+
+	const now = Date.now();
+	if (now - lastSyncAt < SYNC_COOLDOWN_MS) return;
+	lastSyncAt = now;
+
+	try {
+		const quoConversations = await listQuoConversations(env.QUO_USER_ID);
+		logger.info({ count: quoConversations.length }, "Synced Quo conversations");
+
+		for (const quoConv of quoConversations) {
+			const participants = quoConv.participants ?? [];
+			if (participants.length === 0) continue;
+
+			const patientPhone = participants.find((p) => p !== env.QUO_FROM_NUMBER) ?? participants[0];
+
+			const existing = await prisma.smsConversation.findUnique({
+				where: { phoneNumber: patientPhone },
+			});
+
+			if (!existing) {
+				await prisma.smsConversation.create({
+					data: {
+						phoneNumber: patientPhone,
+						lastMessageAt: quoConv.lastActivityAt ? new Date(quoConv.lastActivityAt) : new Date(),
+						lastMessagePreview: quoConv.name ?? null,
+					},
+				});
+			} else if (quoConv.lastActivityAt) {
+				const quoActivity = new Date(quoConv.lastActivityAt);
+				if (!existing.lastMessageAt || quoActivity > existing.lastMessageAt) {
+					await prisma.smsConversation.update({
+						where: { id: existing.id },
+						data: { lastMessageAt: quoActivity },
+					});
+				}
+			}
+		}
+	} catch (err) {
+		logger.error({ err }, "Failed to sync conversations from Quo — falling back to local data");
+	}
+}
+
+/**
+ * Syncs messages for a SINGLE conversation from Quo into the local DB.
+ * Called on-demand when a user opens a specific thread (getMessages).
+ */
+async function syncMessagesForConversation(conversationId: string, patientPhone: string): Promise<void> {
+	if (!isQuoConfigured || !env.QUO_PHONE_NUMBER_ID) return;
+
+	try {
+		const quoMessages = await listQuoMessages({
+			phoneNumberId: env.QUO_PHONE_NUMBER_ID,
+			participants: [patientPhone],
+		});
+
+		for (const quoMsg of quoMessages) {
+			const existing = quoMsg.id
+				? await prisma.smsMessage.findUnique({ where: { quoMessageId: quoMsg.id } })
+				: null;
+			if (existing) continue;
+
+			await prisma.smsMessage.create({
+				data: {
+					conversationId,
+					direction: quoMsg.direction === "outgoing" ? "outbound" : "inbound",
+					body: quoMsg.text ?? "",
+					status: quoMsg.status ?? "received",
+					quoMessageId: quoMsg.id,
+					createdAt: quoMsg.createdAt ? new Date(quoMsg.createdAt) : undefined,
+				},
+			});
+		}
+	} catch (err) {
+		logger.warn({ err, conversationId }, "Failed to sync messages for conversation from Quo");
+	}
+}
+
 class MessagingService {
 	/**
 	 * Lets the frontend show the "SMS isn't configured yet" fallback
@@ -71,6 +177,10 @@ class MessagingService {
 
 	/** Paginated, ordered by most recent activity — the central inbox list. */
 	async listConversations(rawQuery: Record<string, unknown>) {
+		// Fire-and-forget: sync conversation metadata from Quo in the background.
+		// Never awaited — the response returns immediately with local data.
+		syncConversationsFromQuo().catch(() => {});
+
 		const page = Math.max(1, Number(rawQuery.page) || 1);
 		const limit = Math.min(100, Math.max(1, Number(rawQuery.limit) || 50));
 		const search = typeof rawQuery.search === "string" ? rawQuery.search.trim() : "";
@@ -152,6 +262,10 @@ class MessagingService {
 	async getMessages(conversationId: string, rawQuery: Record<string, unknown>) {
 		const conversation = await prisma.smsConversation.findUnique({ where: { id: conversationId } });
 		if (!conversation) return ServiceResponse.failure("Conversation not found.", null, StatusCodes.NOT_FOUND);
+
+		// On-demand sync: pull messages for THIS conversation from Quo before
+		// querying the local DB. Fire-and-forget if it fails.
+		syncMessagesForConversation(conversationId, conversation.phoneNumber).catch(() => {});
 
 		const page = Math.max(1, Number(rawQuery.page) || 1);
 		const limit = Math.min(200, Math.max(1, Number(rawQuery.limit) || 50));

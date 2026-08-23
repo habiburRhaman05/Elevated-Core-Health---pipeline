@@ -46,6 +46,7 @@ const envSchema = z.object({
 	QUO_WEBHOOK_SIGNING_SECRET: emptyToUndefined(z.string().optional()),
 	QUO_FROM_NUMBER: emptyToUndefined(z.string().optional()),
 	QUO_USER_ID: emptyToUndefined(z.string().optional()),
+	QUO_PHONE_NUMBER_ID: emptyToUndefined(z.string().optional()),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

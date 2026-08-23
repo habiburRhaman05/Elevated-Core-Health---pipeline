@@ -132,6 +132,170 @@ export async function listPhoneNumbers(): Promise<QuoPhoneNumber[]> {
 }
 
 // --------------------------------------------------------------------------
+// Read-only API helpers — pull existing data FROM Quo into our local DB
+// --------------------------------------------------------------------------
+
+export interface QuoContact {
+	id: string;
+	externalId?: string;
+	source?: string;
+	defaultFields?: {
+		firstName?: string;
+		lastName?: string;
+		company?: string;
+		role?: string;
+		phoneNumbers?: { name?: string; value: string; id?: string }[];
+		emails?: { name?: string; value: string; id?: string }[];
+	};
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+/**
+ * GET /v1/contacts — fetches all contacts from the Quo workspace.
+ * Paginated via nextPageToken; this function fetches ALL pages.
+ */
+export async function listContacts(): Promise<QuoContact[]> {
+	if (!env.QUO_API_KEY) {
+		throw new QuoApiError("Quo API key is not configured", 503);
+	}
+
+	const allContacts: QuoContact[] = [];
+	let pageToken: string | undefined;
+
+	do {
+		const url = new URL(`${QUO_API_BASE}/contacts`);
+		url.searchParams.set("maxResults", "100");
+		if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+		const res = await fetch(url.toString(), {
+			headers: { Authorization: env.QUO_API_KEY },
+		});
+		const body: unknown = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			const message =
+				(body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			throw new QuoApiError(message, res.status);
+		}
+
+		const data = (body as { data?: QuoContact[] })?.data ?? [];
+		allContacts.push(...data);
+		pageToken = (body as { nextPageToken?: string })?.nextPageToken ?? undefined;
+	} while (pageToken);
+
+	return allContacts;
+}
+
+export interface QuoConversation {
+	id: string;
+	assignedTo?: string;
+	createdAt?: string;
+	updatedAt?: string;
+	lastActivityAt?: string;
+	lastActivityId?: string;
+	name?: string;
+	participants: string[];
+	phoneNumberId?: string;
+}
+
+/**
+ * GET /v1/conversations — fetches all conversations from the Quo workspace.
+ * Paginated via nextPageToken; this function fetches ALL pages.
+ * Optionally scoped to a userId.
+ */
+export async function listQuoConversations(userId?: string): Promise<QuoConversation[]> {
+	if (!env.QUO_API_KEY) {
+		throw new QuoApiError("Quo API key is not configured", 503);
+	}
+
+	const allConversations: QuoConversation[] = [];
+	let pageToken: string | undefined;
+
+	do {
+		const url = new URL(`${QUO_API_BASE}/conversations`);
+		url.searchParams.set("maxResults", "100");
+		if (userId) url.searchParams.set("userId", userId);
+		if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+		const res = await fetch(url.toString(), {
+			headers: { Authorization: env.QUO_API_KEY },
+		});
+		const body: unknown = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			const message =
+				(body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			throw new QuoApiError(message, res.status);
+		}
+
+		const data = (body as { data?: QuoConversation[] })?.data ?? [];
+		allConversations.push(...data);
+		pageToken = (body as { nextPageToken?: string })?.nextPageToken ?? undefined;
+	} while (pageToken);
+
+	return allConversations;
+}
+
+export interface QuoMessage {
+	id: string;
+	to: string[];
+	from: string;
+	text: string;
+	phoneNumberId?: string;
+	conversationId?: string;
+	direction: string;
+	userId?: string;
+	status?: string;
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+/**
+ * GET /v1/messages — fetches messages for a specific participant phone number.
+ * Requires phoneNumberId and at least one participant (E.164).
+ */
+export async function listQuoMessages(params: {
+	phoneNumberId: string;
+	participants: string[];
+	maxResults?: number;
+}): Promise<QuoMessage[]> {
+	if (!env.QUO_API_KEY) {
+		throw new QuoApiError("Quo API key is not configured", 503);
+	}
+
+	const allMessages: QuoMessage[] = [];
+	let pageToken: string | undefined;
+
+	do {
+		const url = new URL(`${QUO_API_BASE}/messages`);
+		url.searchParams.set("phoneNumberId", params.phoneNumberId);
+		for (const p of params.participants) {
+			url.searchParams.append("participants", p);
+		}
+		url.searchParams.set("maxResults", String(params.maxResults ?? 100));
+		if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+		const res = await fetch(url.toString(), {
+			headers: { Authorization: env.QUO_API_KEY },
+		});
+		const body: unknown = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			const message =
+				(body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			throw new QuoApiError(message, res.status);
+		}
+
+		const data = (body as { data?: QuoMessage[] })?.data ?? [];
+		allMessages.push(...data);
+		pageToken = (body as { nextPageToken?: string })?.nextPageToken ?? undefined;
+	} while (pageToken);
+
+	return allMessages;
+}
+
+// --------------------------------------------------------------------------
 // Webhook signature verification
 // --------------------------------------------------------------------------
 
