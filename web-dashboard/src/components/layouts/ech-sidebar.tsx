@@ -24,11 +24,13 @@ import {
   CalendarDays,
   X,
   NotebookText,
+  MessageSquare,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ROUTES } from "@/constants"
 import { useAuth } from "@/hooks/auth/useAuth"
 import { isAdminOrAbove, roleLabel } from "@/lib/roles"
+import { useConversations } from "@/hooks/query/useMessaging"
 
 const VA_NAV = [
   { section: "Main", items: [
@@ -36,6 +38,7 @@ const VA_NAV = [
     { href: ROUTES.DASHBOARD.BOARD, icon: Columns3, label: "Pipeline Board" },
   ]},
   { section: "Operations", items: [
+    { href: ROUTES.DASHBOARD.MESSAGES, icon: MessageSquare, label: "Messages", badgeKey: "unread" as const },
     { href: ROUTES.DASHBOARD.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.DASHBOARD.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.DASHBOARD.REPORTING, icon: BarChart3, label: "My Report" },
@@ -51,6 +54,7 @@ const ADMIN_NAV = [
     { href: ROUTES.ADMIN.BOARD, icon: Columns3, label: "Pipeline Board" },
   ]},
   { section: "Operations", items: [
+    { href: ROUTES.ADMIN.MESSAGES, icon: MessageSquare, label: "Messages", badgeKey: "unread" as const },
     { href: ROUTES.ADMIN.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.ADMIN.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.ADMIN.REPORTING, icon: BarChart3, label: "Reporting" },
@@ -82,6 +86,11 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
   const profileRoute = isAdmin ? ROUTES.ADMIN.PROFILE : ROUTES.DASHBOARD.PROFILE
   const isProfileActive = pathname === profileRoute
   const [loggingOut, setLoggingOut] = useState(false)
+  // Sidebar badge — sum of unreadCount across every conversation. Shares its
+  // query key (and 8s poll) with the Messages inbox page itself, so having
+  // both mounted doesn't double the network traffic.
+  const { data: conversationsData } = useConversations({ limit: 100 })
+  const unreadTotal = (conversationsData?.conversations ?? []).reduce((sum, c) => sum + c.unreadCount, 0)
 
   const handleLogout = async () => {
     setLoggingOut(true)
@@ -158,29 +167,45 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
               {section.items.map((item) => {
                 const Icon = item.icon
                 const isActive = pathname === item.href
+                const badgeCount = "badgeKey" in item && item.badgeKey === "unread" ? unreadTotal : 0
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     className={cn(
-                      "flex items-center rounded-lg text-sm font-medium transition-all duration-200 group",
+                      "flex items-center rounded-lg text-sm font-medium transition-all duration-200 group relative",
                       isCollapsed ? "justify-center px-0 py-2.5" : "px-3 py-2 gap-3",
                       isActive
                         ? "bg-[#036638] text-white shadow-[0_2px_8px_rgba(3,102,56,0.2)] border border-[#036638]"
                         : "text-[#374151] hover:text-[#036638] hover:bg-[#036638]/8 border border-transparent hover:border-[#036638]/15",
                     )}
-                    title={isCollapsed ? item.label : undefined}
+                    title={isCollapsed ? (badgeCount > 0 ? `${item.label} (${badgeCount} unread)` : item.label) : undefined}
                   >
-                    <Icon
-                      className={cn(
-                        "w-5 h-5 flex-shrink-0 transition-all duration-200",
-                        isActive ? "text-white" : "text-[#036638] group-hover:scale-110"
+                    <div className="relative shrink-0">
+                      <Icon
+                        className={cn(
+                          "w-5 h-5 transition-all duration-200",
+                          isActive ? "text-white" : "text-[#036638] group-hover:scale-110"
+                        )}
+                        strokeWidth={1.8}
+                      />
+                      {isCollapsed && badgeCount > 0 && (
+                        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-[#CC3333] border-2 border-[#F0F6F2]" />
                       )}
-                      strokeWidth={1.8}
-                    />
+                    </div>
                     {!isCollapsed && (
-                      <span className="group-hover:translate-x-0.5 transition-transform duration-200">
+                      <span className="flex-1 flex items-center justify-between gap-2 group-hover:translate-x-0.5 transition-transform duration-200">
                         {item.label}
+                        {badgeCount > 0 && (
+                          <span
+                            className={cn(
+                              "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold",
+                              isActive ? "bg-white/25 text-white" : "bg-[#CC3333]/15 text-[#CC3333]",
+                            )}
+                          >
+                            {badgeCount}
+                          </span>
+                        )}
                       </span>
                     )}
                   </Link>

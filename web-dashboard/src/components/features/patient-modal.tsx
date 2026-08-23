@@ -72,6 +72,8 @@ import {
 } from "@/hooks/query/usePatients"
 import { usePatient } from "@/hooks/query/usePatients"
 import { useActivityLog } from "@/hooks/query/useActivityLog"
+import { useConversationByPatient } from "@/hooks/query/useMessaging"
+import { MessageThread } from "./messaging/message-thread"
 import { SelectOrOther } from "@/components/shared/select-or-other"
 import { LocationCombobox } from "@/components/shared/location-combobox"
 import {
@@ -221,7 +223,7 @@ function splitPatientName(fullName: string): { firstName: string; lastName: stri
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") }
 }
 
-type TabKey = "overview" | "contact" | "eligibility" | "checklist" | "flags" | "activity" | "notes"
+type TabKey = "overview" | "contact" | "eligibility" | "checklist" | "flags" | "messages" | "activity" | "notes"
 
 // Small donut/ring progress indicator used in the Overview → SOP card.
 function ProgressRing({ percent, label, sublabel }: { percent: number; label: string; sublabel: string }) {
@@ -339,6 +341,9 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   const { data: logData } = useActivityLog(
     patientId ? { patientId, limit: 20 } : undefined,
   )
+  const { data: conversationData, isLoading: isLoadingConversation } = useConversationByPatient(patientId || undefined)
+  const smsConversation = conversationData?.conversation ?? null
+  const smsUnreadCount = smsConversation?.unreadCount ?? 0
 
   const moveStage = useMoveStage()
   // Stage currently receiving a move — the stage-stepper + Move Next buttons
@@ -770,6 +775,7 @@ const isExpired = () => {
     { key: "contact", label: "Contact & Payment", icon: <User className="w-4 h-4" /> },
     { key: "eligibility", label: "Eligibility Details", icon: <ShieldCheck className="w-4 h-4" /> },
     { key: "flags", label: "Flags", icon: <Flag className="w-4 h-4" /> },
+    { key: "messages", label: "Messages", icon: <Phone className="w-4 h-4" /> },
     { key: "activity", label: "Activity Log", icon: <Clock className="w-4 h-4" /> },
     { key: "notes", label: "Notes", icon: <MessageSquare className="w-4 h-4" /> },
   ]
@@ -1213,6 +1219,11 @@ const isExpired = () => {
                       {tab.key === "flags" && flagTotalCount > 0 && (
                         <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#CC3333]/15 text-[#CC3333] text-[10px] font-bold">
                           {flagTotalCount}
+                        </span>
+                      )}
+                      {tab.key === "messages" && smsUnreadCount > 0 && (
+                        <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#036638]/15 text-[#036638] text-[10px] font-bold">
+                          {smsUnreadCount}
                         </span>
                       )}
                     </button>
@@ -1918,6 +1929,24 @@ const isExpired = () => {
                       </div>
                     )}
 
+                    {/* ---------------------------------------------------- */}
+                    {/* Messages (SMS) tab                                   */}
+                    {/* ---------------------------------------------------- */}
+                    {activeTab === "messages" && (
+                      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm min-h-full flex flex-col" style={{ height: "min(560px, 60vh)" }}>
+                        <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide flex items-center gap-2 px-4 sm:px-5 pt-4 sm:pt-5">
+                          <Phone className="w-5 h-5 text-[#036638]" /> Messages
+                        </h4>
+                        <MessageThread
+                          conversation={smsConversation}
+                          noPhoneNumber={!isLoadingConversation && !patient?.phone}
+                          isLoadingConversation={isLoadingConversation}
+                          isActive={activeTab === "messages"}
+                          className="min-h-0"
+                        />
+                      </div>
+                    )}
+
                     {activeTab === "activity" && (
                       <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm min-h-full">
                         <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide flex items-center gap-2 mb-4">
@@ -2437,6 +2466,11 @@ const isExpired = () => {
                         {flagTotalCount}
                       </span>
                     )}
+                    {tab.key === "messages" && smsUnreadCount > 0 && (
+                      <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#036638]/15 text-[#036638] text-[10px] font-bold">
+                        {smsUnreadCount}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -2881,6 +2915,20 @@ const isExpired = () => {
                         </div>
                       ))) : (<p className="text-sm text-gray-400 italic">No flags raised yet</p>)}
                     </div>
+                  </div>
+                )}
+
+                {activeTab === "messages" && (
+                  <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col" style={{ height: "min(520px, 65vh)" }}>
+                    <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide flex items-center gap-2 px-4 pt-4"><Phone className="w-5 h-5 text-[#036638]" /> Messages</h4>
+                    <MessageThread
+                      conversation={smsConversation}
+                      noPhoneNumber={!isLoadingConversation && !patient?.phone}
+                      isLoadingConversation={isLoadingConversation}
+                      isActive={activeTab === "messages"}
+                      compact
+                      className="min-h-0"
+                    />
                   </div>
                 )}
 

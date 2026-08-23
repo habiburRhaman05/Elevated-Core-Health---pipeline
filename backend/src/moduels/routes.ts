@@ -6,12 +6,14 @@ import { authRouter } from "./auth/auth.router";
 import { crmRouter } from "./crm/crm.router";
 import { dashboardRouter } from "./dashboard/dashboard.router";
 import { importRouter } from "./import/import.router";
+import { messagingRouter } from "./messaging/messaging.router";
 import { patientsPublicRouter, patientsRouter } from "./patients/patients.router";
 import { reportingRouter } from "./reporting/reporting.router";
 import { settingsRouter } from "./settings/settings.router";
 import { stagesRouter } from "./stages/stages.router";
 import { usersRouter } from "./users/users.router";
 import { webhooksRouter } from "./webhooks/webhooks.router";
+import { webhooksQuoPublicRouter } from "./webhooks/webhooks-quo.router";
 
 export const apiRouter: Router = Router();
 
@@ -19,6 +21,7 @@ apiRouter.use("/auth", authRouter);
 apiRouter.use("/patients", patientsPublicRouter);
 apiRouter.use("/patients", patientsRouter);
 apiRouter.use("/patients/import", importRouter);
+apiRouter.use("/messaging", messagingRouter);
 apiRouter.use("/activity-log", activityLogRouter);
 apiRouter.use("/reporting", reportingRouter);
 apiRouter.use("/dashboard", dashboardRouter);
@@ -28,3 +31,4 @@ apiRouter.use("/stages", stagesRouter);
 apiRouter.use("/users", usersRouter);
 apiRouter.use("/admin/settings", settingsRouter);
 apiRouter.use("/admin/webhooks", webhooksRouter);
+apiRouter.use("/webhooks", webhooksQuoPublicRouter);

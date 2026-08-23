@@ -1,18 +1,39 @@
 /**
  * Vercel Serverless Entry Point
  *
- * Bundled by tsup → dist/vercel.js. Vercel serves this as a serverless function.
- * All path aliases (@/) are resolved at bundle time — no alias issues at runtime.
+ * esbuild bundles this file → api/index.js (all @/ aliases resolved at build
+ * time, third-party packages stay external).  Vercel serves api/index.js as
+ * a serverless function.
  *
- * The DB connection is lazily established on first request via Prisma's
- * globalThis caching pattern in utils/prisma.ts (no extra setup needed).
+ * If env validation fails during cold-start the try/catch below creates a
+ * fallback Express app that returns a readable JSON 500 instead of crashing
+ * the function silently.
  */
 
-// Ensure env vars are loaded before anything else
 import "dotenv/config";
 
-import { app } from "./server";
+import express from "express";
+import type { Express } from "express";
 
-// Vercel expects a default export of the request handler.
-// Express app itself is a valid handler — Vercel calls it as (req, res).
+let app: Express;
+
+try {
+	// app.ts reads process.env directly for CORS — no top-level envConfig
+	// import that could throw.  Full env validation runs lazily inside
+	// middleware when the first API route is hit.
+	const mod = await import("./app");
+	app = mod.app;
+} catch (err) {
+	console.error("⚠️  Failed to initialize app:", err);
+	const fallback = express();
+	fallback.use((_req, res) => {
+		res.status(500).json({
+			success: false,
+			message: "Backend failed to initialize.",
+			error: String(err),
+		});
+	});
+	app = fallback;
+}
+
 export default app;
