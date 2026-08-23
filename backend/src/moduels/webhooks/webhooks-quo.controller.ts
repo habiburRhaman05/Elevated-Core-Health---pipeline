@@ -19,7 +19,10 @@ export const webhooksQuoController = {
 		// Falling back to a re-stringified body should never actually happen in
 		// practice (Content-Type is always application/json on a real Quo
 		// delivery) but keeps this from crashing if it ever does.
+		console.log(req.body);
+		
 		const rawBody = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body ?? {});
+console.log("row-boyd",rawBody);
 
 		const verified = verifyWebhookSignature(rawBody, {
 			"webhook-id": req.header("webhook-id") ?? undefined,
