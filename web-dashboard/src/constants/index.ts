@@ -17,6 +17,7 @@ export const ROUTES = {
     REPORTING: "/dashboard/reporting",
     IMPORT: "/dashboard/import",
     PROFILE: "/dashboard/profile",
+    MESSAGES: "/dashboard/messages",
   },
   ADMIN: {
     HOME: "/admin/dashboard",
@@ -33,6 +34,7 @@ export const ROUTES = {
     APP_SETTINGS: "/admin/dashboard/app-settings",
     PROFILE: "/admin/dashboard/profile",
     SETTINGS_WEBHOOKS: "/admin/dashboard/settings/webhooks",
+    MESSAGES: "/admin/dashboard/messages",
   },
 }
 
@@ -84,6 +86,14 @@ export const API_ENDPOINTS = {
     WEBHOOK_ROTATE_SECRET: "/admin/webhooks/rotate-secret",
     WEBHOOK_TEST: "/admin/webhooks/test",
   },
+  MESSAGING: {
+    STATUS: "/messaging/status",
+    CONVERSATIONS: "/messaging/conversations",
+    CONVERSATION_BY_PATIENT: (patientId: string) => `/messaging/conversations/by-patient/${patientId}`,
+    MESSAGES: (conversationId: string) => `/messaging/conversations/${conversationId}/messages`,
+    SEND: (conversationId: string) => `/messaging/conversations/${conversationId}/send`,
+    READ: (conversationId: string) => `/messaging/conversations/${conversationId}/read`,
+  },
 }
 
 export const QUERY_KEYS = {
@@ -120,6 +130,15 @@ export const QUERY_KEYS = {
     SUMMARY: ["dashboard", "summary"] as const,
   },
   STAGES: ["stages"] as const,
+  MESSAGING: {
+    STATUS: ["messaging", "status"] as const,
+    // Prefix key — invalidating this refreshes the conversation list AND
+    // every open thread/by-patient query below it.
+    ALL: ["messaging"] as const,
+    CONVERSATIONS: (filters?: Record<string, unknown>) => ["messaging", "conversations", filters] as const,
+    CONVERSATION_BY_PATIENT: (patientId: string) => ["messaging", "conversations", "by-patient", patientId] as const,
+    MESSAGES: (conversationId: string) => ["messaging", "conversations", conversationId, "messages"] as const,
+  },
   ADMIN: {
     USERS: ["admin", "users"] as const,
     STAGES: ["admin", "stages"] as const,

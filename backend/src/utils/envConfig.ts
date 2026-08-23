@@ -38,6 +38,14 @@ const envSchema = z.object({
 	CLOUDINARY_CLOUD_NAME: emptyToUndefined(z.string().optional()),
 	CLOUDINARY_API_KEY: emptyToUndefined(z.string().optional()),
 	CLOUDINARY_API_SECRET: emptyToUndefined(z.string().optional()),
+
+	// Quo (OpenPhone) SMS — optional; every messaging endpoint returns a clear
+	// "not configured" error (never a silent no-op) without these, same pattern
+	// as RESEND_API_KEY/CLOUDINARY_* above. See lib/quo.ts.
+	QUO_API_KEY: emptyToUndefined(z.string().optional()),
+	QUO_WEBHOOK_SIGNING_SECRET: emptyToUndefined(z.string().optional()),
+	QUO_FROM_NUMBER: emptyToUndefined(z.string().optional()),
+	QUO_USER_ID: emptyToUndefined(z.string().optional()),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

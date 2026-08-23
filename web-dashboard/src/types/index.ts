@@ -140,7 +140,15 @@ export interface Patient {
   activityLogs?: ActivityLog[]
 }
 
-export type ActivityCategory = "auth" | "profile" | "patient" | "appointment" | "user_management" | "report" | "system"
+export type ActivityCategory =
+  | "auth"
+  | "profile"
+  | "patient"
+  | "appointment"
+  | "user_management"
+  | "report"
+  | "system"
+  | "messaging"
 
 export interface ActivityLog {
   id: string
@@ -180,6 +188,49 @@ export interface ImportBatch {
   importedByUser?: Pick<User, "id" | "name"> | null
   createdAt: string
   completedAt?: string | null
+}
+
+export type SmsMessageDirection = "inbound" | "outbound"
+export type SmsMessageStatus = "sent" | "delivered" | "failed" | "received"
+
+export interface SmsMessage {
+  id: string
+  conversationId: string
+  direction: SmsMessageDirection
+  body: string
+  status: SmsMessageStatus
+  quoMessageId?: string | null
+  sentById?: string | null
+  sentByUser?: Pick<User, "id" | "name"> | null
+  errorMessage?: string | null
+  createdAt: string
+}
+
+export interface SmsConversation {
+  id: string
+  phoneNumber: string
+  patientId: string | null
+  patient?: { id: string; name: string } | null
+  lastMessageAt: string | null
+  lastMessagePreview: string | null
+  unreadCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SmsConversationsResponse {
+  conversations: SmsConversation[]
+  total: number
+  page: number
+  limit: number
+  totalPages: number
+}
+
+export interface SmsMessagesResponse {
+  messages: SmsMessage[]
+  total: number
+  page: number
+  limit: number
 }
 
 export interface CrmContactsResponse {

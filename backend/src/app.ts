@@ -31,7 +31,18 @@ app.set("trust proxy", 1);
 // Middlewares — read CORS from process.env directly (no envConfig import)
 const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";
 
-app.use(express.json());
+// `verify` captures the exact raw bytes of every request body onto
+// req.rawBody alongside the normal parsed req.body — every existing route
+// keeps getting parsed JSON exactly as before. Needed by the Quo webhook
+// (POST /api/webhooks/quo), whose signature is computed over the literal
+// bytes Quo sent, not a re-stringified copy of the parsed object.
+app.use(
+	express.json({
+		verify: (req, _res, buf) => {
+			(req as import("express").Request).rawBody = buf;
+		},
+	}),
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(helmet());

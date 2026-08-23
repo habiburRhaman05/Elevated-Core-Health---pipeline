@@ -33,6 +33,7 @@ enum ActivityCategory {
   user_management
   report
   system
+  messaging
 }
 
 enum ChecklistStatus {
@@ -118,6 +119,7 @@ model User {
   importBatches         ImportBatch[]    @relation("ImportBatchImportedBy")
   crmIntegrations       CrmIntegration[]
   appSettingsUpdated    AppSetting[]
+  sentSmsMessages       SmsMessage[]
 
   createdByUser User?  @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdUsers  User[] @relation("UserCreatedBy")
@@ -186,9 +188,10 @@ model Patient {
   privateLockedByUser User?        @relation("PatientPrivateLockedBy", fields: [privateLockedById], references: [id])
   importBatch         ImportBatch? @relation(fields: [importBatchId], references: [id])
 
-  activityLogs ActivityLog[]
-  flags        PatientFlag[] @relation("PatientFlags")
-  patientNotes PatientNote[] @relation("PatientNotes")
+  activityLogs     ActivityLog[]
+  flags            PatientFlag[]     @relation("PatientFlags")
+  patientNotes     PatientNote[]     @relation("PatientNotes")
+  smsConversations SmsConversation[]
 
   @@index([stage])
   @@index([isFlagged])
@@ -213,12 +216,12 @@ model Patient {
  * but no longer written by the app; migration backfills it into this table.
  */
 model PatientNote {
-  id          String    @id @default(uuid())
-  patientId   String    @map("patient_id")
+  id          String   @id @default(uuid())
+  patientId   String   @map("patient_id")
   content     String
-  createdById String?   @map("created_by")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  createdById String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   patient       Patient @relation("PatientNotes", fields: [patientId], references: [id], onDelete: Cascade)
   createdByUser User?   @relation("PatientNotesCreatedBy", fields: [createdById], references: [id])
@@ -394,4 +397,53 @@ model AppSetting {
   updatedByUser User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@map("app_settings")
+}
+
+/**
+ * One row per distinct SMS phone number talking to the clinic's Quo business
+ * number - not per patient, since an unmatched number (wrong number, referral,
+ * spam) still needs a home so its messages are never silently dropped. Linked
+ * to a Patient only when the phone number matches one on file.
+ */
+model SmsConversation {
+  id                 String    @id @default(uuid())
+  phoneNumber        String    @unique @map("phone_number") // E.164 normalized
+  patientId          String?   @map("patient_id")
+  quoContactId       String?   @map("quo_contact_id")
+  lastMessageAt      DateTime? @map("last_message_at")
+  lastMessagePreview String?   @map("last_message_preview")
+  unreadCount        Int       @default(0) @map("unread_count")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  patient  Patient?     @relation(fields: [patientId], references: [id])
+  messages SmsMessage[]
+
+  @@index([patientId])
+  @@index([lastMessageAt])
+  @@map("sms_conversations")
+}
+
+/**
+ * Individual inbound/outbound SMS within a conversation thread. Outbound
+ * messages record `sentById` so the UI can attribute "who sent this" across
+ * shift-sharing VAs, per the same audit standard as the rest of the app.
+ */
+model SmsMessage {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  direction      String // "inbound" | "outbound"
+  body           String
+  status         String   @default("sent") // sent | delivered | failed | received
+  quoMessageId   String?  @unique @map("quo_message_id")
+  sentById       String?  @map("sent_by_id") // VA/admin user id, outbound only
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation SmsConversation @relation(fields: [conversationId], references: [id])
+  sentByUser   User?           @relation(fields: [sentById], references: [id])
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("sms_messages")
 }

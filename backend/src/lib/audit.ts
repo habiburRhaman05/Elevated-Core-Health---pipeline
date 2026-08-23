@@ -17,7 +17,8 @@ export type ActivityCategory =
 	| "appointment"
 	| "user_management"
 	| "report"
-	| "system";
+	| "system"
+	| "messaging";
 
 export interface AuditEntry {
 	/** null for system-wide events not tied to a specific patient (login, user mgmt, exports, ...). */
