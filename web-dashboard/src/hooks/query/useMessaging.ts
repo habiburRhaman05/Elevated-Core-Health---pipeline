@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useRef, useState } from "react"
 import {
   useQuery,
   useMutation,
@@ -8,6 +9,7 @@ import {
 } from "@tanstack/react-query"
 import { MessagingService, type ListConversationsFilters } from "@/services/messaging.service"
 import { QUERY_KEYS } from "@/constants"
+import { getPusherClient, isPusherConfigured } from "@/lib/pusher-client"
 import { toast } from "sonner"
 
 /** Lets the UI show the "SMS isn't configured yet" fallback proactively. */
@@ -38,16 +40,16 @@ export function useMessagingNumbers() {
   })
 }
 
-/** Central inbox conversation list — polls per the client's confirmed
- * realtime strategy (never WebSockets, see CLAUDE.md / requirements doc §3).
- * At the fast end of the confirmed 5-10s band (not below it) - a webhook
- * hitting our backend doesn't push to the browser on its own, so this is
- * still how new data actually reaches the UI within that architecture. */
+/** Central inbox conversation list — polls as a fallback behind Pusher
+ * real-time push. When Pusher is configured, push events invalidate the
+ * query cache instantly; the poll is a safety net for missed events
+ * (network blip, backgrounded tab). Raised to 30s from the original 5s
+ * now that real-time is available. */
 export function useConversations(filters?: ListConversationsFilters) {
   return useQuery({
     queryKey: QUERY_KEYS.MESSAGING.CONVERSATIONS(filters as Record<string, unknown> | undefined),
     queryFn: () => MessagingService.listConversations(filters),
-    refetchInterval: 5000,
+    refetchInterval: 30_000,
     placeholderData: keepPreviousData,
   })
 }
@@ -64,17 +66,15 @@ export function useConversationByPatient(patientId: string | undefined) {
 
 /** Thread fetch. `enabled` lets callers poll ONLY while this thread is the
  * one actually open — the patient modal tab and the central inbox both pass
- * `enabled: false` for a thread that isn't currently visible. Tightened to
- * 3s (below the documented 5-10s floor) specifically for the actively-open
- * thread, since that's the one spot where a slow poll is most noticeable -
- * closest we can get to "immediate" without WebSockets/SSE, which are ruled
- * out for this Vercel serverless deployment (see CLAUDE.md). */
+ * `enabled: false` for a thread that isn't currently visible. Polls at 10s
+ * as a fallback behind Pusher real-time push (the per-thread channel
+ * invalidates this query instantly on new messages). */
 export function useConversationMessages(conversationId: string | null | undefined, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: QUERY_KEYS.MESSAGING.MESSAGES(conversationId ?? ""),
     queryFn: () => MessagingService.getMessages(conversationId as string),
     enabled: !!conversationId && options?.enabled !== false,
-    refetchInterval: 3000,
+    refetchInterval: 10_000,
   })
 }
 
@@ -133,4 +133,77 @@ export function useLinkConversationPatient() {
       toast.error(err?.response?.data?.message || "Failed to link patient")
     },
   })
+}
+
+/**
+ * Real-time messaging via Pusher. Subscribes to the private messaging
+ * channel (conversation-list updates) and optionally a per-thread channel
+ * (when a conversationId is provided). Invalidates the relevant React Query
+ * caches on each event so the UI refetches immediately.
+ *
+ * Degrades to no-op when Pusher env vars are missing — the existing polling
+ * intervals in useConversations/useConversationMessages keep everything
+ * working.
+ */
+export function useRealtimeMessaging(conversationId?: string | null) {
+  const qc = useQueryClient()
+  const [status, setStatus] = useState<"live" | "reconnecting" | "unavailable">(
+    isPusherConfigured ? "reconnecting" : "unavailable",
+  )
+  const subscribedThreadRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!isPusherConfigured) return
+    const pusher = getPusherClient()
+    if (!pusher) return
+
+    // --- Connection state tracking ---
+    const onConnected = () => setStatus("live")
+    const onDisconnected = () => setStatus("reconnecting")
+    const onReconnecting = () => setStatus("reconnecting")
+    pusher.connection.bind("connected", onConnected)
+    pusher.connection.bind("disconnected", onDisconnected)
+    pusher.connection.bind("reconnecting", onReconnecting)
+
+    // If already connected when we mount (e.g. hot reload), pick it up.
+    if (pusher.connection.state === "connected") setStatus("live")
+
+    // --- Conversation list channel ---
+    const listChannel = pusher.subscribe("private-messaging")
+    listChannel.bind("new-message", () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.MESSAGING.ALL })
+    })
+    listChannel.bind("conversation-updated", () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.MESSAGING.ALL })
+    })
+
+    return () => {
+      pusher.connection.unbind("connected", onConnected)
+      pusher.connection.unbind("disconnected", onDisconnected)
+      pusher.connection.unbind("reconnecting", onReconnecting)
+      pusher.unsubscribe("private-messaging")
+    }
+  }, [qc])
+
+  // --- Per-thread channel (subscribes/unsubscribes as conversationId changes) ---
+  useEffect(() => {
+    if (!isPusherConfigured) return
+    const pusher = getPusherClient()
+    if (!pusher || !conversationId) return
+
+    const channelName = `private-conversation-${conversationId}`
+    const channel = pusher.subscribe(channelName)
+    channel.bind("new-message", () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.MESSAGING.MESSAGES(conversationId) })
+    })
+    subscribedThreadRef.current = conversationId
+
+    return () => {
+      pusher.unsubscribe(channelName)
+      channel.unbind("new-message")
+      subscribedThreadRef.current = null
+    }
+  }, [conversationId, qc])
+
+  return { status }
 }

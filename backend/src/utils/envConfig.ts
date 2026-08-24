@@ -47,6 +47,13 @@ const envSchema = z.object({
 	// ones, so adding a number to the Quo workspace needs no redeploy.
 	QUO_API_KEY: emptyToUndefined(z.string().optional()),
 	QUO_WEBHOOK_SIGNING_SECRET: emptyToUndefined(z.string().optional()),
+
+	// Pusher — optional; when missing the app degrades to polling-only
+	// (no real-time push, but everything else works). See lib/pusher.ts.
+	PUSHER_APP_ID: emptyToUndefined(z.string().optional()),
+	PUSHER_KEY: emptyToUndefined(z.string().optional()),
+	PUSHER_SECRET: emptyToUndefined(z.string().optional()),
+	PUSHER_CLUSTER: emptyToUndefined(z.string().optional()),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

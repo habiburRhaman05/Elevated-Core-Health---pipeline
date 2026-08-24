@@ -250,6 +250,8 @@ export interface SmsConversation {
   patientId: string | null
   /** Which business number owns this thread; null on pre-multi-number rows. */
   quoPhoneNumberId?: string | null
+  /** Quo's contact display name for this phone number, if known. */
+  quoContactName?: string | null
   patient?: { id: string; name: string } | null
   lastMessageAt: string | null
   lastMessagePreview: string | null

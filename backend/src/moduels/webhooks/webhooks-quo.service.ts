@@ -1,5 +1,7 @@
 import { audit } from "@/lib/audit";
 import { normalizeE164, phoneDigits10 } from "@/lib/phone";
+import { notifyConversationUpdated, notifyNewMessage } from "@/lib/pusher";
+import { findContactNameByPhoneNumber } from "@/lib/quo";
 import { logger } from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { ServiceResponse } from "@/utils/serviceResponse";
@@ -15,6 +17,12 @@ interface ParsedInboundMessage {
 	quoPhoneNumberId: string | null;
 	fromNumber: string;
 	body: string;
+	/**
+	 * Contact display name from the webhook payload, if Quo includes one.
+	 * Used to populate the conversation's quoContactName (fill-if-null)
+	 * so unmatched threads show a human name instead of just a phone number.
+	 */
+	contactName: string | null;
 	/**
 	 * Attachments Quo gives us on the inbound message itself (image/file
 	 * URLs). Stored and rendered - we just can't SEND media back, since
@@ -56,11 +64,28 @@ function parseInboundMessage(payload: unknown): ParsedInboundMessage | null {
 		const from = context.senderIdentifier;
 		const text = resource.text;
 		if (typeof from !== "string" || typeof text !== "string") return null;
+		// Contact name: try context.contactName, then resource.fromName, then
+		// nested resource.contact / context.contact.name — Quo's payload shape
+		// hasn't been confirmed against a real delivery yet (Bug 3), so we
+		// defensively check every likely path.
+		const contactName =
+			(typeof context.contactName === "string" && context.contactName) ||
+			(typeof resource.fromName === "string" && resource.fromName) ||
+			(() => {
+				const contact = context.contact as Record<string, unknown> | undefined;
+				return typeof contact?.name === "string" ? contact.name : null;
+			})() ||
+			(() => {
+				const contact = resource.contact as Record<string, unknown> | undefined;
+				return typeof contact?.name === "string" ? contact.name : null;
+			})() ||
+			null;
 		return {
 			quoMessageId: typeof resource.id === "string" ? resource.id : null,
 			quoPhoneNumberId: typeof context.phoneNumberId === "string" ? context.phoneNumberId : null,
 			fromNumber: from,
 			body: text,
+			contactName,
 			media: parseMediaArray(resource.media),
 		};
 	}
@@ -70,11 +95,22 @@ function parseInboundMessage(payload: unknown): ParsedInboundMessage | null {
 		const from = object.from;
 		const body = object.body;
 		if (typeof from !== "string" || typeof body !== "string") return null;
+		// Legacy shape: contact name might be on object.contactName,
+		// object.fromName, or nested object.contact.name.
+		const contactName =
+			(typeof object.contactName === "string" && object.contactName) ||
+			(typeof object.fromName === "string" && object.fromName) ||
+			(() => {
+				const contact = object.contact as Record<string, unknown> | undefined;
+				return typeof contact?.name === "string" ? contact.name : null;
+			})() ||
+			null;
 		return {
 			quoMessageId: typeof object.id === "string" ? object.id : null,
 			quoPhoneNumberId: typeof object.phoneNumberId === "string" ? object.phoneNumberId : null,
 			fromNumber: from,
 			body,
+			contactName,
 			media: parseMediaArray(object.media),
 		};
 	}
@@ -143,33 +179,63 @@ class WebhooksQuoService {
 			: [];
 		const matchedPatient = candidates[0] ?? null;
 
-		let conversation = await prisma.smsConversation.findUnique({ where: { phoneNumber: normalizedFrom } });
-		if (!conversation) {
-			conversation = await prisma.smsConversation.create({
-				data: {
-					phoneNumber: normalizedFrom,
-					quoPhoneNumberId: parsed.quoPhoneNumberId,
-					patientId: matchedPatient?.id ?? null,
-					lastMessageAt: new Date(),
-					lastMessagePreview: parsed.body.slice(0, 200),
-					unreadCount: 1,
+	let conversation = await prisma.smsConversation.findUnique({ where: { phoneNumber: normalizedFrom } });
+	if (!conversation) {
+		conversation = await prisma.smsConversation.create({
+			data: {
+				phoneNumber: normalizedFrom,
+				quoPhoneNumberId: parsed.quoPhoneNumberId,
+				patientId: matchedPatient?.id ?? null,
+				quoContactName: parsed.contactName,
+				lastMessageAt: new Date(),
+				lastMessagePreview: parsed.body.slice(0, 200),
+				unreadCount: 1,
+			},
+		});
+	} else {
+		conversation = await prisma.smsConversation.update({
+			where: { id: conversation.id },
+			data: {
+				// Never move a conversation FROM one patient TO another here —
+				// only fill in a link that was previously null (unmatched bucket).
+				patientId: conversation.patientId ?? matchedPatient?.id ?? null,
+				// Same rule for the owning business number: fill a null, never
+				// re-point a thread that already belongs to a number.
+				quoPhoneNumberId: conversation.quoPhoneNumberId ?? parsed.quoPhoneNumberId,
+				// Contact name: fill-if-null, same pattern as patientId/quoPhoneNumberId.
+				...(parsed.contactName && !conversation.quoContactName
+					? { quoContactName: parsed.contactName }
+					: {}),
+				lastMessageAt: new Date(),
+				lastMessagePreview: parsed.body.slice(0, 200),
+				unreadCount: { increment: 1 },
 				},
 			});
-		} else {
-			conversation = await prisma.smsConversation.update({
-				where: { id: conversation.id },
-				data: {
-					// Never move a conversation FROM one patient TO another here —
-					// only fill in a link that was previously null (unmatched bucket).
-					patientId: conversation.patientId ?? matchedPatient?.id ?? null,
-					// Same rule for the owning business number: fill a null, never
-					// re-point a thread that already belongs to a number.
-					quoPhoneNumberId: conversation.quoPhoneNumberId ?? parsed.quoPhoneNumberId,
-					lastMessageAt: new Date(),
-					lastMessagePreview: parsed.body.slice(0, 200),
-					unreadCount: { increment: 1 },
-				},
-			});
+		}
+
+		// Fallback contact name lookup: if the webhook didn't include a contact
+		// name and this is a new unmatched conversation, try to look up the name
+		// from Quo's contacts list. Only called once per new conversation, not on
+		// every inbound message.
+		if (!conversation.quoContactName && !conversation.patientId && !parsed.contactName) {
+			const isNewConversation = !matchedPatient;
+			if (isNewConversation) {
+				// Fire-and-forget: contact lookup is best-effort, never blocks the response.
+				findContactNameByPhoneNumber(normalizedFrom)
+					.then(async (name) => {
+						if (!name) return;
+						try {
+							await prisma.smsConversation.update({
+								where: { id: conversation.id },
+								data: { quoContactName: name },
+							});
+							logger.info({ conversationId: conversation.id, contactName: name }, "Backfilled Quo contact name from contacts lookup");
+						} catch (err) {
+							logger.warn({ err, conversationId: conversation.id }, "Failed to backfill Quo contact name");
+						}
+				})
+				.catch(() => {}); // swallow lookup errors silently
+			}
 		}
 
 		const message = await prisma.smsMessage.create({
@@ -179,11 +245,17 @@ class WebhooksQuoService {
 				body: parsed.body,
 				status: "received",
 				quoMessageId: parsed.quoMessageId,
-				media: parsed.media.length > 0 ? JSON.parse(JSON.stringify(parsed.media)) : undefined,
-			},
-		});
+			media: parsed.media.length > 0 ? JSON.parse(JSON.stringify(parsed.media)) : undefined,
+		},
+	});
 
-		const label = matchedPatient
+	// Real-time push — notify all connected clients about the new inbound
+	// message. Payload is intentionally minimal (IDs only, never the body)
+	// so PHI never transits through Pusher's infrastructure at rest.
+	notifyNewMessage(conversation.id, message.id);
+	notifyConversationUpdated(conversation.id);
+
+	const label = matchedPatient
 			? `${matchedPatient.firstName} ${matchedPatient.lastName ?? ""}`.trim()
 			: normalizedFrom;
 

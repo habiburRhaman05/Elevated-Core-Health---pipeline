@@ -414,6 +414,7 @@ model SmsConversation {
   /// stay visible under the inbox's "All numbers" view.
   quoPhoneNumberId   String?   @map("quo_phone_number_id")
   quoContactId       String?   @map("quo_contact_id")
+  quoContactName     String?   @map("quo_contact_name")
   lastMessageAt      DateTime? @map("last_message_at")
   lastMessagePreview String?   @map("last_message_preview")
   unreadCount        Int       @default(0) @map("unread_count")

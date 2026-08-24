@@ -72,7 +72,7 @@ import {
 } from "@/hooks/query/usePatients"
 import { usePatient } from "@/hooks/query/usePatients"
 import { useActivityLog } from "@/hooks/query/useActivityLog"
-import { useConversationByPatient } from "@/hooks/query/useMessaging"
+import { useConversationByPatient, useRealtimeMessaging } from "@/hooks/query/useMessaging"
 import { MessageThread } from "./messaging/message-thread"
 import { SelectOrOther } from "@/components/shared/select-or-other"
 import { LocationCombobox } from "@/components/shared/location-combobox"
@@ -344,6 +344,8 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   const { data: conversationData, isLoading: isLoadingConversation } = useConversationByPatient(patientId || undefined)
   const smsConversation = conversationData?.conversation ?? null
   const smsUnreadCount = smsConversation?.unreadCount ?? 0
+  // Real-time push — updates messages live when Pusher is configured.
+  useRealtimeMessaging(smsConversation?.id)
 
   const moveStage = useMoveStage()
   // Stage currently receiving a move — the stage-stepper + Move Next buttons
