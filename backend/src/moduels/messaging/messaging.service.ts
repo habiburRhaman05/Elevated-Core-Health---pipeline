@@ -4,10 +4,10 @@ import { audit, type RequestContext } from "@/lib/audit";
 import { normalizeE164 } from "@/lib/phone";
 import {
 	isQuoConfigured,
-	QuoApiError,
-	sendMessage as quoSendMessage,
 	listQuoConversations,
 	listQuoMessages,
+	QuoApiError,
+	sendMessage as quoSendMessage,
 } from "@/lib/quo";
 import type { AuthenticatedUser } from "@/lib/types";
 import { env } from "@/utils/envConfig";
@@ -143,9 +143,7 @@ async function syncMessagesForConversation(conversationId: string, patientPhone:
 		});
 
 		for (const quoMsg of quoMessages) {
-			const existing = quoMsg.id
-				? await prisma.smsMessage.findUnique({ where: { quoMessageId: quoMsg.id } })
-				: null;
+			const existing = quoMsg.id ? await prisma.smsMessage.findUnique({ where: { quoMessageId: quoMsg.id } }) : null;
 			if (existing) continue;
 
 			await prisma.smsMessage.create({
@@ -375,6 +373,51 @@ class MessagingService {
 			return ServiceResponse.failure(errorMessage || "Failed to send message.", { message }, StatusCodes.BAD_GATEWAY);
 		}
 		return ServiceResponse.success("Message sent.", { message });
+	}
+
+	/**
+	 * Links an "unmatched" conversation to a patient, from the /messages
+	 * contact panel. This only ever runs on an explicit VA/admin choice -
+	 * inbound webhook matching never re-points an existing link on its own.
+	 */
+	async linkConversationToPatient(
+		conversationId: string,
+		patientId: string,
+		actor: AuthenticatedUser,
+		ctx: RequestContext = noContext,
+	) {
+		const [conversation, patient] = await Promise.all([
+			prisma.smsConversation.findUnique({ where: { id: conversationId } }),
+			prisma.patient.findUnique({ where: { id: patientId }, select: PATIENT_SELECT }),
+		]);
+		if (!conversation) return ServiceResponse.failure("Conversation not found.", null, StatusCodes.NOT_FOUND);
+		if (!patient) return ServiceResponse.failure("Patient not found.", null, StatusCodes.NOT_FOUND);
+
+		const updated = await prisma.smsConversation.update({
+			where: { id: conversationId },
+			data: { patientId },
+			include: { patient: { select: PATIENT_SELECT } },
+		});
+
+		const label = `${patient.firstName} ${patient.lastName ?? ""}`.trim();
+		await audit({
+			user: actor,
+			patientId,
+			action: "sms.conversation_linked",
+			category: "messaging",
+			entityType: "sms_conversation",
+			entityId: conversationId,
+			prevValue: { patientId: conversation.patientId },
+			newValue: { patientId },
+			message: `${actor.name} linked the SMS conversation with ${conversation.phoneNumber} to ${label}`,
+			metadata: { conversationId, phoneNumber: conversation.phoneNumber },
+			ip: ctx.ip,
+			userAgent: ctx.userAgent,
+		});
+
+		return ServiceResponse.success("Conversation linked to patient.", {
+			conversation: conversationDto(updated),
+		});
 	}
 
 	/** Resets unreadCount to 0 when a VA opens a thread. */

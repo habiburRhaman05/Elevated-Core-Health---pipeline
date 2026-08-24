@@ -31,3 +31,10 @@ export const SendMessageSchema = z.object({
 		content: z.string().min(1, "Message can't be empty").max(1600, "Message is too long (max 1600 characters)"),
 	}),
 });
+
+export const LinkPatientSchema = z.object({
+	params: z.object({ id: z.string().min(1) }),
+	body: z.object({
+		patientId: z.string().min(1, "A patient must be selected"),
+	}),
+});

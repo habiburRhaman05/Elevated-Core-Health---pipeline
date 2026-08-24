@@ -86,3 +86,25 @@ export function useMarkConversationRead() {
     // Silent on error — marking read is a background nicety, not worth a toast.
   })
 }
+
+/**
+ * Links an unmatched conversation to a patient from the /messages contact
+ * panel. Invalidates the whole messaging tree so the row, thread header and
+ * contact panel all flip to the linked state together, plus the patient
+ * queries whose activity log now has the new audit entry.
+ */
+export function useLinkConversationPatient() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ conversationId, patientId }: { conversationId: string; patientId: string }) =>
+      MessagingService.linkPatient(conversationId, patientId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.MESSAGING.ALL })
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.ACTIVITY_LOG.ALL })
+      toast.success("Conversation linked to patient")
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.message || "Failed to link patient")
+    },
+  })
+}

@@ -76,6 +76,7 @@ export const ACTION_META: Record<string, { label: string; icon: typeof Activity;
   "system.crm_permission_updated": { label: "CRM Permission", icon: Plug, color: "#6B7280" },
   "sms.sent": { label: "SMS Sent", icon: MessageSquare, color: "#0F9B8E" },
   "sms.received": { label: "SMS Received", icon: MessageSquare, color: "#036638" },
+  "sms.conversation_linked": { label: "SMS Linked", icon: MessageSquare, color: "#0F9B8E" },
   "sms.ambiguous_match": { label: "SMS Match Needs Review", icon: ShieldAlert, color: "#D97706" },
 }
 

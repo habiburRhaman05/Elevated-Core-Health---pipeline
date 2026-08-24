@@ -48,6 +48,19 @@ export const messagingController = {
 		handleServiceResponse(serviceResponse, res);
 	},
 
+	async linkPatient(req: Request, res: Response): Promise<void> {
+		if (!req.user) {
+			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, StatusCodes.UNAUTHORIZED), res);
+			return;
+		}
+		const serviceResponse = await messagingService.linkConversationToPatient(
+			param(req, "id"),
+			req.body.patientId,
+			req.user,
+			getRequestContext(req),
+		);
+		handleServiceResponse(serviceResponse, res);
+	},
 	async markRead(req: Request, res: Response): Promise<void> {
 		if (!req.user) {
 			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, StatusCodes.UNAUTHORIZED), res);

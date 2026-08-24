@@ -93,6 +93,7 @@ export const API_ENDPOINTS = {
     MESSAGES: (conversationId: string) => `/messaging/conversations/${conversationId}/messages`,
     SEND: (conversationId: string) => `/messaging/conversations/${conversationId}/send`,
     READ: (conversationId: string) => `/messaging/conversations/${conversationId}/read`,
+    LINK_PATIENT: (conversationId: string) => `/messaging/conversations/${conversationId}/link-patient`,
   },
 }
 

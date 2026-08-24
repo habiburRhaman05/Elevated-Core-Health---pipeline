@@ -6,6 +6,7 @@ import { messagingController } from "./messaging.controller";
 import {
 	ConversationIdParamSchema,
 	GetMessagesQuerySchema,
+	LinkPatientSchema,
 	ListConversationsQuerySchema,
 	PatientIdParamSchema,
 	SendMessageSchema,
@@ -39,4 +40,9 @@ messagingRouter.post(
 	"/conversations/:id/read",
 	validateRequest(ConversationIdParamSchema),
 	messagingController.markRead,
+);
+messagingRouter.patch(
+	"/conversations/:id/link-patient",
+	validateRequest(LinkPatientSchema),
+	messagingController.linkPatient,
 );

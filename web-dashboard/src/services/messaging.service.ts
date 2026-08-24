@@ -54,6 +54,14 @@ export const MessagingService = {
     return data.data
   },
 
+  async linkPatient(conversationId: string, patientId: string): Promise<{ conversation: SmsConversation }> {
+    const { data } = await axiosInstance.patch<ApiResponse<{ conversation: SmsConversation }>>(
+      API_ENDPOINTS.MESSAGING.LINK_PATIENT(conversationId),
+      { patientId },
+    )
+    return data.data
+  },
+
   async markRead(conversationId: string): Promise<{ conversation: SmsConversation }> {
     const { data } = await axiosInstance.post<ApiResponse<{ conversation: SmsConversation }>>(
       API_ENDPOINTS.MESSAGING.READ(conversationId),
