@@ -17,7 +17,6 @@
 		"start:prod": "node dist/index.js",
 		"seed": "node --import=tsx prisma/seed.ts",
 		"check": "biome check --write"
-		
 	},
 	"dependencies": {
 		"@prisma/adapter-pg": "^7.8.0",
@@ -41,7 +40,9 @@
 		"pg": "^8.22.0",
 		"pino": "9.14.0",
 		"pino-http": "10.5.0",
+		"pusher": "^5.3.4",
 		"resend": "^6.17.2",
+		"ws": "^8.21.3",
 		"xlsx": "^0.18.5",
 		"zod": "3.25.76"
 	},
@@ -52,6 +53,7 @@
 		"@types/multer": "^2.2.0",
 		"@types/supertest": "6.0.3",
 		"@types/swagger-ui-express": "4.1.8",
+		"@types/ws": "^8.18.1",
 		"@vitest/coverage-v8": "3.2.4",
 		"esbuild": "^0.25.12",
 		"pino-pretty": "13.1.3",

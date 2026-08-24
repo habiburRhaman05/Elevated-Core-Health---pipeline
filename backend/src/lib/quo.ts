@@ -330,6 +330,42 @@ export async function listContacts(): Promise<QuoContact[]> {
 	return allContacts;
 }
 
+/**
+ * Looks up a single contact by phone number from the Quo workspace's contact
+ * list. Uses the existing paginated listContacts() and filters client-side —
+ * Quo's REST API doesn't expose a server-side phone-number filter on
+ * GET /v1/contacts. Called only once per new unmatched conversation (not on
+ * every poll), so the full-list fetch is acceptable.
+ *
+ * Returns the contact's display name (firstName + lastName) if found, or null.
+ */
+export async function findContactNameByPhoneNumber(e164Phone: string): Promise<string | null> {
+	try {
+		const contacts = await listContacts();
+		// Normalize the incoming number to digits-only for loose matching
+		// (patient.phone isn't guaranteed stored E.164).
+		const targetDigits = e164Phone.replace(/\D/g, "");
+		if (!targetDigits) return null;
+
+		for (const contact of contacts) {
+			const phoneNumbers = contact.defaultFields?.phoneNumbers ?? [];
+			for (const pn of phoneNumbers) {
+				const pnDigits = (pn.value ?? "").replace(/\D/g, "");
+				if (pnDigits && pnDigits.endsWith(targetDigits.slice(-10))) {
+					const name = [contact.defaultFields?.firstName, contact.defaultFields?.lastName]
+						.filter(Boolean)
+						.join(" ")
+						.trim();
+					return name || null;
+				}
+			}
+		}
+	} catch (err) {
+		logger.warn({ err, phone: e164Phone }, "Failed to look up Quo contact by phone number");
+	}
+	return null;
+}
+
 export interface QuoConversation {
 	id: string;
 	assignedTo?: string;

@@ -78,6 +78,12 @@ type TimelineItem =
   | { kind: "message"; createdAt: string; data: SmsMessage }
   | { kind: "call"; createdAt: string; data: SmsCallLog }
 
+// NOTE: Quo's public REST API (GET /v1/messages response schema) does NOT
+// include a reactions field on message objects — only id, to, from, text,
+// phoneNumberId, conversationId, direction, userId, status, createdAt,
+// updatedAt, media. What looks like a reaction/badge in the Quo app UI
+// isn't exposed via the public API. Don't build reaction persistence —
+// this is a platform limitation, not a missed feature.
 const REACTION_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🙏"]
 
 /**
@@ -216,7 +222,8 @@ export function MessageThread({
 
   const notConfigured = status?.configured === false
   const canSend = !!conversationId && !notConfigured && !sendDisabledReason
-  const patientLabel = conversation?.patient?.name || conversation?.phoneNumber || "Patient"
+  // Display priority: patient name > Quo contact name > raw phone number
+  const patientLabel = conversation?.patient?.name || conversation?.quoContactName || conversation?.phoneNumber || "Patient"
 
   if (isLoadingConversation) {
     return (

@@ -42,7 +42,8 @@ interface ConversationContactPanelProps {
  */
 export function ConversationContactPanel({ conversation }: ConversationContactPanelProps) {
   const isLinked = !!conversation.patientId
-  const displayName = conversation.patient?.name || conversation.phoneNumber
+  // Display priority: patient name > Quo contact name > raw phone number
+  const displayName = conversation.patient?.name || conversation.quoContactName || conversation.phoneNumber
 
   // Which of our business numbers this thread belongs to - shown regardless
   // of patient-link state, since it's about the conversation, not the patient.
@@ -61,7 +62,7 @@ export function ConversationContactPanel({ conversation }: ConversationContactPa
           </div>
         )}
         <p className="mt-3 text-base font-bold text-[#111827] break-words w-full">
-          {isLinked ? displayName : conversation.phoneNumber}
+          {isLinked ? displayName : (conversation.quoContactName || conversation.phoneNumber)}
         </p>
         {!isLinked && <p className="mt-1 text-xs text-[#9CA3AF]">Not linked to a patient</p>}
 

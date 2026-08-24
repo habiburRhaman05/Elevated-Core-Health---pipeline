@@ -2,6 +2,7 @@ import { StatusCodes } from "http-status-codes";
 
 import { audit, type RequestContext } from "@/lib/audit";
 import { normalizeE164 } from "@/lib/phone";
+import { notifyConversationUpdated, notifyNewMessage } from "@/lib/pusher";
 import {
 	getMessagingCapableNumbers,
 	getWorkspaceNumbers,
@@ -36,6 +37,7 @@ interface ConversationWithPatient {
 	phoneNumber: string;
 	patientId: string | null;
 	quoContactId: string | null;
+	quoContactName: string | null;
 	quoPhoneNumberId: string | null;
 	lastMessageAt: Date | null;
 	lastMessagePreview: string | null;
@@ -48,9 +50,7 @@ interface ConversationWithPatient {
 function patientLabel(conversation: Pick<ConversationWithPatient, "patient" | "phoneNumber">): string {
 	if (!conversation.patient) return conversation.phoneNumber;
 	return `${conversation.patient.firstName} ${conversation.patient.lastName ?? ""}`.trim();
-}
-
-function conversationDto(conversation: ConversationWithPatient) {
+}function conversationDto(conversation: ConversationWithPatient) {
 	return {
 		id: conversation.id,
 		phoneNumber: conversation.phoneNumber,
@@ -61,12 +61,13 @@ function conversationDto(conversation: ConversationWithPatient) {
 					name: [conversation.patient.firstName, conversation.patient.lastName].filter(Boolean).join(" ").trim(),
 				}
 			: null,
-		quoPhoneNumberId: conversation.quoPhoneNumberId,
-		lastMessageAt: conversation.lastMessageAt,
-		lastMessagePreview: conversation.lastMessagePreview,
-		unreadCount: conversation.unreadCount,
-		createdAt: conversation.createdAt,
-		updatedAt: conversation.updatedAt,
+			quoPhoneNumberId: conversation.quoPhoneNumberId,
+			quoContactName: conversation.quoContactName,
+			lastMessageAt: conversation.lastMessageAt,
+			lastMessagePreview: conversation.lastMessagePreview,
+			unreadCount: conversation.unreadCount,
+			createdAt: conversation.createdAt,
+			updatedAt: conversation.updatedAt,
 	};
 }
 
@@ -531,6 +532,11 @@ class MessagingService {
 				},
 			});
 		}
+
+		// Real-time push — notify all connected clients about the new outbound
+		// message. Same minimal payload as the inbound path: IDs only.
+		notifyNewMessage(conversationId, message.id);
+		notifyConversationUpdated(conversationId);
 
 		// Hard requirement (Phase 3.5) — every SMS event must be traceable to
 		// who did what, to which patient, and when, same as stage moves/flags/notes.

@@ -19,7 +19,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { avatarColor, cn, formatConversationListTime } from "@/lib/utils"
-import { useConversations, useMessagingNumbers } from "@/hooks/query/useMessaging"
+import { useConversations, useMessagingNumbers, useRealtimeMessaging } from "@/hooks/query/useMessaging"
 import { Avatar } from "./avatar"
 import { MessageThread } from "./message-thread"
 import { ConversationContactPanel } from "./conversation-contact-panel"
@@ -104,13 +104,14 @@ function useSelectedNumberParam(
   }, [numbers, urlValue])
 
   // First-ever visit only (param truly absent, not even the "all" sentinel):
-  // default to the Secondary number. Runs at most once per URL - as soon as
-  // any selection (including explicit "All") is made, rawUrlValue is never
-  // null again, so this never fires again for that URL.
+  // default to the Primary (capable) number so new threads can send. Falls
+  // back to the Secondary if no capable number exists. Runs at most once per
+  // URL - as soon as any selection (including explicit "All") is made,
+  // rawUrlValue is never null again, so this never fires again for that URL.
   useEffect(() => {
     if (rawUrlValue !== null || numbers.length === 0) return
-    const secondary = numbers.find((n) => !n.messagingCapable)
-    if (secondary) setSelected(secondary.phoneNumberId)
+    const primary = numbers.find((n) => n.messagingCapable)
+    if (primary) setSelected(primary.phoneNumberId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numbers, rawUrlValue])
 
@@ -326,6 +327,9 @@ export function MessagingInbox() {
   const [showListDrawer, setShowListDrawer] = useState(false)
 
   const { data: numbersData } = useMessagingNumbers()
+  // Real-time push via Pusher — invalidates queries on new messages.
+  // Falls back to polling-only (no-op) when Pusher env vars are missing.
+  const { status: realtimeStatus } = useRealtimeMessaging(selectedId)
   const numbers = useMemo(() => numbersData?.numbers ?? [], [numbersData])
   const [selectedNumberId, setSelectedNumberId] = useSelectedNumberParam(numbers)
 
@@ -368,7 +372,18 @@ export function MessagingInbox() {
   // out on the thread's own number; a brand-new thread uses whatever the
   // toggle is set to. Mirrors the same resolution order sendMessage() uses
   // server-side, so this local check never disagrees with the real gate.
-  const effectiveNumberId = selected?.quoPhoneNumberId ?? selectedNumberId
+  //
+  // Defensive backstop for threads with null quoPhoneNumberId: when the
+  // conversation has no owning number AND there's exactly one capable
+  // number on the workspace, default to that one automatically — don't
+  // fall back to the toggle selection (which might be the restricted
+  // number). Only fall back to the toggle when there's genuine ambiguity
+  // (2+ capable numbers AND no number on the conversation).
+  const capableNumbers = numbers.filter((n) => n.messagingCapable)
+  const effectiveNumberId = selected?.quoPhoneNumberId
+    ?? (selected && !selected.quoPhoneNumberId && capableNumbers.length === 1
+      ? capableNumbers[0].phoneNumberId
+      : selectedNumberId)
   const effectiveNumber = effectiveNumberId ? numbers.find((n) => n.phoneNumberId === effectiveNumberId) : undefined
   const sendDisabledReason =
     effectiveNumber && !effectiveNumber.messagingCapable
@@ -410,6 +425,26 @@ export function MessagingInbox() {
                 )}
               >
                 {t.label}
+                {/* Real-time connection status dot — only on Chats tab */}
+                {t.key === "chats" && (
+                  <span
+                    title={
+                      realtimeStatus === "live"
+                        ? "Live — messages update in real-time"
+                        : realtimeStatus === "reconnecting"
+                          ? "Reconnecting — messages may be delayed"
+                          : "Polling only — real-time not configured"
+                    }
+                    className={cn(
+                      "inline-block w-1.5 h-1.5 rounded-full ml-1.5 -mb-px",
+                      realtimeStatus === "live"
+                        ? "bg-emerald-400"
+                        : realtimeStatus === "reconnecting"
+                          ? "bg-amber-400 animate-pulse"
+                          : "bg-gray-300",
+                    )}
+                  />
+                )}
               </button>
             ))}
           </div>
@@ -552,10 +587,10 @@ export function MessagingInbox() {
               >
                 <List className="w-4 h-4" />
               </button>
-              <Avatar name={selected.patient?.name || selected.phoneNumber} colorKey={selected.id} size="sm" />
+              <Avatar name={selected.patient?.name || selected.quoContactName || selected.phoneNumber} colorKey={selected.id} size="sm" />
               <div className="min-w-0">
                 <p className="text-sm font-bold text-[#111827] truncate">
-                  {selected.patient?.name || "Unmatched number"}
+                  {selected.patient?.name || selected.quoContactName || "Unmatched number"}
                 </p>
                 <div className="flex items-center gap-1.5 min-w-0">
                   <p className="text-xs text-[#6B7280] truncate">{selected.phoneNumber}</p>
@@ -718,7 +753,8 @@ function ConversationRow({
    *  already filtered down to a single number. */
   showNumberBadge?: boolean
 }) {
-  const name = conversation.patient?.name || conversation.phoneNumber
+  // Display priority: patient name > Quo contact name > raw phone number
+  const name = conversation.patient?.name || conversation.quoContactName || conversation.phoneNumber
   const unread = conversation.unreadCount > 0
   return (
     <button
