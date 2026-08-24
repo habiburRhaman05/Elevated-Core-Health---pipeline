@@ -20,6 +20,7 @@ export const messagingRouter: Router = Router();
 messagingRouter.use(requireAuth);
 
 messagingRouter.get("/status", messagingController.getStatus);
+messagingRouter.get("/numbers", messagingController.listNumbers);
 messagingRouter.get(
 	"/conversations",
 	validateRequest(ListConversationsQuerySchema),

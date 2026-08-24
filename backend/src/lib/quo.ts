@@ -97,9 +97,67 @@ export async function sendMessage(params: SendMessageParams): Promise<SendMessag
 
 export interface QuoPhoneNumber {
 	id: string;
-	phoneNumber: string;
+	/** E.164, e.g. "+15615761861". Quo also calls this `number` on some responses. */
+	phoneNumber?: string;
+	number?: string;
+	/** Pretty form Quo returns for display, e.g. "(561) 576-1861". */
+	formattedNumber?: string;
+	/**
+	 * NOTE: Quo's real GET /v1/phone-numbers response does NOT have a
+	 * top-level `userId` field, despite what earlier docs implied - it has a
+	 * `users` array instead (each with its own `id`/`role`). `userId` is kept
+	 * here only in case a future/older API version does return it directly;
+	 * resolveOwnerUserId() below is what actually extracts a usable id.
+	 */
 	userId?: string;
+	users?: Array<{ id: string; role?: string; email?: string }>;
 	name?: string;
+	/**
+	 * Per-capability regional restrictions. A number whose US messaging is
+	 * "restricted" cannot send SMS at all - see getMessagingCapableNumbers().
+	 */
+	restrictions?: {
+		messaging?: Record<string, string | undefined>;
+		calling?: Record<string, string | undefined>;
+	};
+}
+
+/** Resolves a usable Quo userId for a number: the top-level field if present
+ *  (older/alternate API shape), else the "owner" in `users[]`, else the
+ *  first user listed. */
+function resolveOwnerUserId(n: QuoPhoneNumber): string | undefined {
+	if (n.userId) return n.userId;
+	const users = n.users ?? [];
+	return users.find((u) => u.role === "owner")?.id ?? users[0]?.id;
+}
+
+/**
+ * Every number on the workspace, view-ready - shown in the UI's Inboxes
+ * toggle regardless of whether it can actually send (mirrors Quo's own
+ * dashboard, which lists every inbox). `messagingCapable` is what gates
+ * sending, not visibility - see getMessagingCapableNumbers().
+ */
+export interface WorkspaceNumber {
+	id: string;
+	phoneNumberId: string;
+	phoneNumber: string;
+	formattedNumber: string;
+	userId: string | null;
+	messagingCapable: boolean;
+}
+
+/** Narrowed, send-ready view of a Quo number that can actually do US SMS. */
+export interface MessagingCapableNumber {
+	/** Quo's phone-number id (e.g. "PN3lxEXr7a"). */
+	id: string;
+	/** Same value as `id` - kept as its own field so callers reading a
+	 *  `phoneNumberId` off this object don't have to know they're equal. */
+	phoneNumberId: string;
+	/** E.164 - what the send API wants as `from`. */
+	phoneNumber: string;
+	/** Display label, e.g. "(561) 576-1861". */
+	formattedNumber: string;
+	userId: string;
 }
 
 /**
@@ -129,6 +187,92 @@ export async function listPhoneNumbers(): Promise<QuoPhoneNumber[]> {
 			? body
 			: [];
 	return list as QuoPhoneNumber[];
+}
+
+/**
+ * Every number on the workspace, cached in-process for a few minutes so the
+ * inbox toggle and every send don't each hit Quo's API separately.
+ *
+ * Deliberately does NOT drop restricted numbers - the toggle needs to show
+ * every inbox (same as Quo's own dashboard) so a VA/admin can switch to and
+ * view any of them, e.g. an inbox that only handles calls. What a restricted
+ * number can't do is SEND - that's enforced separately below, server-side,
+ * so there is no code path (UI, API call, or crafted request) that can
+ * actually dispatch an SMS through a restricted number even if its id is
+ * selected in the toggle or passed by hand.
+ */
+const NUMBERS_CACHE_TTL_MS = 5 * 60 * 1000;
+let numbersCache: { at: number; value: WorkspaceNumber[] } | null = null;
+
+export function clearMessagingNumbersCache(): void {
+	numbersCache = null;
+}
+
+export async function getWorkspaceNumbers(): Promise<WorkspaceNumber[]> {
+	if (!env.QUO_API_KEY) return [];
+
+	if (numbersCache && Date.now() - numbersCache.at < NUMBERS_CACHE_TTL_MS) {
+		return numbersCache.value;
+	}
+
+	let raw: QuoPhoneNumber[];
+	try {
+		raw = await listPhoneNumbers();
+	} catch (err) {
+		logger.error({ err }, "Could not load Quo phone numbers");
+		// Serve a stale cache rather than pretending the workspace has no
+		// numbers (which would disable the whole feature on a transient blip).
+		return numbersCache?.value ?? [];
+	}
+
+	const numbers: WorkspaceNumber[] = [];
+	for (const n of raw) {
+		const e164 = n.phoneNumber ?? n.number;
+		if (!n.id || !e164) continue;
+		const userId = resolveOwnerUserId(n) ?? null;
+		const messagingCapable = userId !== null && n.restrictions?.messaging?.US !== "restricted";
+		if (!messagingCapable) {
+			logger.info(
+				{ phoneNumberId: n.id, hasUserId: userId !== null },
+				"Quo number can be viewed but not sent from (restricted or no owning user)",
+			);
+		}
+		numbers.push({
+			id: n.id,
+			phoneNumberId: n.id,
+			phoneNumber: e164,
+			formattedNumber: n.formattedNumber ?? e164,
+			userId,
+			messagingCapable,
+		});
+	}
+
+	numbersCache = { at: Date.now(), value: numbers };
+	return numbers;
+}
+
+/**
+ * The strict subset of getWorkspaceNumbers() that can actually send US SMS.
+ * This is the ONLY list sendMessage()/messaging.service.ts may resolve a
+ * `from` against - never getWorkspaceNumbers() directly.
+ */
+export async function getMessagingCapableNumbers(): Promise<MessagingCapableNumber[]> {
+	const all = await getWorkspaceNumbers();
+	return all
+		.filter((n): n is WorkspaceNumber & { userId: string } => n.messagingCapable && n.userId !== null)
+		.map((n) => ({
+			id: n.id,
+			phoneNumberId: n.phoneNumberId,
+			phoneNumber: n.phoneNumber,
+			formattedNumber: n.formattedNumber,
+			userId: n.userId,
+		}));
+}
+
+/** Resolves one capable (send-ready) number by its Quo phone-number id, or null. */
+export async function findMessagingCapableNumber(phoneNumberId: string): Promise<MessagingCapableNumber | null> {
+	const numbers = await getMessagingCapableNumbers();
+	return numbers.find((n) => n.phoneNumberId === phoneNumberId) ?? null;
 }
 
 // --------------------------------------------------------------------------
@@ -174,8 +318,7 @@ export async function listContacts(): Promise<QuoContact[]> {
 		const body: unknown = await res.json().catch(() => null);
 
 		if (!res.ok) {
-			const message =
-				(body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			const message = (body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
 			throw new QuoApiError(message, res.status);
 		}
 
@@ -224,8 +367,7 @@ export async function listQuoConversations(userId?: string): Promise<QuoConversa
 		const body: unknown = await res.json().catch(() => null);
 
 		if (!res.ok) {
-			const message =
-				(body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			const message = (body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
 			throw new QuoApiError(message, res.status);
 		}
 
@@ -249,6 +391,8 @@ export interface QuoMessage {
 	status?: string;
 	createdAt?: string;
 	updatedAt?: string;
+	/** Confirmed live: `[]` when empty; docs confirm `{ type?, url }` entries when populated. */
+	media?: Array<{ type?: string | null; url: string }>;
 }
 
 /**
@@ -282,8 +426,7 @@ export async function listQuoMessages(params: {
 		const body: unknown = await res.json().catch(() => null);
 
 		if (!res.ok) {
-			const message =
-				(body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			const message = (body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
 			throw new QuoApiError(message, res.status);
 		}
 
@@ -293,6 +436,68 @@ export async function listQuoMessages(params: {
 	} while (pageToken);
 
 	return allMessages;
+}
+
+/**
+ * GET /v1/calls — call history for a phone number + participant, per Quo's
+ * documented shape (quo.com/docs/mdx/api-reference/calls/list-calls, checked
+ * 2026-08-25): direction "incoming"|"outgoing", status is one of queued |
+ * initiated | ringing | in-progress | completed | busy | failed | no-answer |
+ * canceled | missed | answered | forwarded | abandoned. `duration` is
+ * seconds. Not yet exercised against real call data (this workspace's
+ * capable number had no calls at audit time) - confirm once real calls
+ * exist, same caveat as the rest of this file's "built from docs" endpoints.
+ */
+export interface QuoCall {
+	id: string;
+	phoneNumberId: string;
+	userId?: string;
+	direction: string;
+	status: string;
+	participants: string[];
+	duration?: number;
+	createdAt: string;
+	answeredAt?: string | null;
+	completedAt?: string | null;
+}
+
+export async function listCalls(params: {
+	phoneNumberId: string;
+	participants: string[];
+	maxResults?: number;
+}): Promise<QuoCall[]> {
+	if (!env.QUO_API_KEY) {
+		throw new QuoApiError("Quo API key is not configured", 503);
+	}
+
+	const allCalls: QuoCall[] = [];
+	let pageToken: string | undefined;
+
+	do {
+		const url = new URL(`${QUO_API_BASE}/calls`);
+		url.searchParams.set("phoneNumberId", params.phoneNumberId);
+		for (const p of params.participants) {
+			url.searchParams.append("participants", p);
+		}
+		url.searchParams.set("maxResults", String(params.maxResults ?? 100));
+		if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+		const res = await fetch(url.toString(), {
+			headers: { Authorization: env.QUO_API_KEY },
+		});
+		const body: unknown = await res.json().catch(() => null);
+
+		if (!res.ok) {
+			const message = (body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+			throw new QuoApiError(message, res.status);
+		}
+
+		const data = (body as { data?: QuoCall[] })?.data ?? [];
+		allCalls.push(...data);
+		pageToken = (body as { nextPageToken?: string })?.nextPageToken ?? undefined;
+	} while (pageToken);
+
+	return allCalls;
 }
 
 // --------------------------------------------------------------------------

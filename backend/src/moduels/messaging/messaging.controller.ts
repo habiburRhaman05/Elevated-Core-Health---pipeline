@@ -16,7 +16,11 @@ function param(req: Request, name: string): string {
 
 export const messagingController = {
 	async getStatus(_req: Request, res: Response): Promise<void> {
-		handleServiceResponse(messagingService.getStatus(), res);
+		handleServiceResponse(await messagingService.getStatus(), res);
+	},
+
+	async listNumbers(_req: Request, res: Response): Promise<void> {
+		handleServiceResponse(await messagingService.listNumbers(), res);
 	},
 
 	async listConversations(req: Request, res: Response): Promise<void> {
@@ -44,6 +48,7 @@ export const messagingController = {
 			req.body.content,
 			req.user,
 			getRequestContext(req),
+			req.body.phoneNumberId,
 		);
 		handleServiceResponse(serviceResponse, res);
 	},

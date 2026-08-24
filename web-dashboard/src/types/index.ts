@@ -193,6 +193,13 @@ export interface ImportBatch {
 export type SmsMessageDirection = "inbound" | "outbound"
 export type SmsMessageStatus = "sent" | "delivered" | "failed" | "received"
 
+/** An inbound attachment. Quo has no send-MMS endpoint, so this only ever
+ *  appears on inbound messages, never something we attach on an outbound send. */
+export interface SmsMediaItem {
+  type?: string | null
+  url: string
+}
+
 export interface SmsMessage {
   id: string
   conversationId: string
@@ -203,13 +210,46 @@ export interface SmsMessage {
   sentById?: string | null
   sentByUser?: Pick<User, "id" | "name"> | null
   errorMessage?: string | null
+  media?: SmsMediaItem[] | null
   createdAt: string
+}
+
+/**
+ * A call (incoming/outgoing) synced from Quo's call history, merged into the
+ * thread timeline alongside SmsMessage. `status` is Quo's raw call status
+ * string (e.g. "completed" | "missed" | "no-answer" | "busy" | ...) - the UI
+ * buckets it into missed/completed/neutral for display.
+ */
+export interface SmsCallLog {
+  id: string
+  conversationId: string
+  /** Quo's own call-direction values - NOT the same strings as SmsMessageDirection. */
+  direction: "incoming" | "outgoing"
+  status: string
+  durationSeconds?: number | null
+  createdAt: string
+}
+
+/**
+ * A Quo business number on the workspace. `messagingCapable` is
+ * informational only (drives whether the compose box is enabled for that
+ * inbox) - the actual send gate is enforced server-side, so a restricted
+ * number can never send even if this flag were somehow wrong or ignored.
+ */
+export interface MessagingNumber {
+  id: string
+  phoneNumberId: string
+  formattedNumber: string
+  userId: string
+  messagingCapable: boolean
 }
 
 export interface SmsConversation {
   id: string
   phoneNumber: string
   patientId: string | null
+  /** Which business number owns this thread; null on pre-multi-number rows. */
+  quoPhoneNumberId?: string | null
   patient?: { id: string; name: string } | null
   lastMessageAt: string | null
   lastMessagePreview: string | null
@@ -228,6 +268,7 @@ export interface SmsConversationsResponse {
 
 export interface SmsMessagesResponse {
   messages: SmsMessage[]
+  calls: SmsCallLog[]
   total: number
   page: number
   limit: number

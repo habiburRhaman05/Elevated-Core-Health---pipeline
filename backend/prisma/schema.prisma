@@ -409,6 +409,10 @@ model SmsConversation {
   id                 String    @id @default(uuid())
   phoneNumber        String    @unique @map("phone_number") // E.164 normalized
   patientId          String?   @map("patient_id")
+  /// Which Quo business number this thread belongs to (e.g. "PN3lxEXr7a").
+  /// Nullable: rows created before multi-number support have no value and
+  /// stay visible under the inbox's "All numbers" view.
+  quoPhoneNumberId   String?   @map("quo_phone_number_id")
   quoContactId       String?   @map("quo_contact_id")
   lastMessageAt      DateTime? @map("last_message_at")
   lastMessagePreview String?   @map("last_message_preview")
@@ -418,9 +422,11 @@ model SmsConversation {
 
   patient  Patient?     @relation(fields: [patientId], references: [id])
   messages SmsMessage[]
+  callLogs SmsCallLog[]
 
   @@index([patientId])
   @@index([lastMessageAt])
+  @@index([quoPhoneNumberId])
   @@map("sms_conversations")
 }
 
@@ -438,6 +444,10 @@ model SmsMessage {
   quoMessageId   String?  @unique @map("quo_message_id")
   sentById       String?  @map("sent_by_id") // VA/admin user id, outbound only
   errorMessage   String?  @map("error_message")
+  /// Inbound attachments from Quo, e.g. [{ "type": "image/jpeg", "url": "https://..." }].
+  /// Quo has no send-MMS endpoint, so this is only ever populated on inbound
+  /// messages, never something this app writes on an outbound send.
+  media          Json?
   createdAt      DateTime @default(now()) @map("created_at")
 
   conversation SmsConversation @relation(fields: [conversationId], references: [id])
@@ -446,4 +456,26 @@ model SmsMessage {
   @@index([conversationId])
   @@index([createdAt])
   @@map("sms_messages")
+}
+
+/**
+ * Call history synced from Quo's GET /v1/calls, merged into the thread
+ * timeline alongside SmsMessage on the frontend (chronological, by
+ * createdAt). Read-only from our side - calls are placed here only by
+ * syncing from Quo, never created directly by this app.
+ */
+model SmsCallLog {
+  id              String   @id @default(uuid())
+  conversationId  String   @map("conversation_id")
+  quoCallId       String   @unique @map("quo_call_id")
+  direction       String // "incoming" | "outgoing" (Quo's own call-direction values)
+  status          String // Quo's raw call status: completed | missed | no-answer | busy | ...
+  durationSeconds Int?     @map("duration_seconds")
+  createdAt       DateTime @map("created_at")
+
+  conversation SmsConversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("sms_call_logs")
 }

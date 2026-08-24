@@ -42,11 +42,11 @@ const envSchema = z.object({
 	// Quo (OpenPhone) SMS — optional; every messaging endpoint returns a clear
 	// "not configured" error (never a silent no-op) without these, same pattern
 	// as RESEND_API_KEY/CLOUDINARY_* above. See lib/quo.ts.
+	// The business numbers themselves are NOT env vars — they're discovered at
+	// runtime from GET /v1/phone-numbers and filtered to US-messaging-capable
+	// ones, so adding a number to the Quo workspace needs no redeploy.
 	QUO_API_KEY: emptyToUndefined(z.string().optional()),
 	QUO_WEBHOOK_SIGNING_SECRET: emptyToUndefined(z.string().optional()),
-	QUO_FROM_NUMBER: emptyToUndefined(z.string().optional()),
-	QUO_USER_ID: emptyToUndefined(z.string().optional()),
-	QUO_PHONE_NUMBER_ID: emptyToUndefined(z.string().optional()),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

@@ -4,11 +4,37 @@ import { logger } from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { ServiceResponse } from "@/utils/serviceResponse";
 
+interface InboundMediaItem {
+	type?: string | null;
+	url: string;
+}
+
 interface ParsedInboundMessage {
 	quoMessageId: string | null;
+	/** Which of our business numbers received this message. */
+	quoPhoneNumberId: string | null;
 	fromNumber: string;
 	body: string;
-	hasMedia: boolean;
+	/**
+	 * Attachments Quo gives us on the inbound message itself (image/file
+	 * URLs). Stored and rendered - we just can't SEND media back, since
+	 * Quo's API has no send-MMS endpoint. That constraint is about sending,
+	 * not receiving.
+	 */
+	media: InboundMediaItem[];
+}
+
+/** Keeps only well-formed `{ url: string, type?: string|null }` entries. */
+function parseMediaArray(value: unknown): InboundMediaItem[] {
+	if (!Array.isArray(value)) return [];
+	const out: InboundMediaItem[] = [];
+	for (const entry of value) {
+		if (entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string") {
+			const type = (entry as { type?: unknown }).type;
+			out.push({ url: (entry as { url: string }).url, type: typeof type === "string" ? type : null });
+		}
+	}
+	return out;
 }
 
 /**
@@ -32,9 +58,10 @@ function parseInboundMessage(payload: unknown): ParsedInboundMessage | null {
 		if (typeof from !== "string" || typeof text !== "string") return null;
 		return {
 			quoMessageId: typeof resource.id === "string" ? resource.id : null,
+			quoPhoneNumberId: typeof context.phoneNumberId === "string" ? context.phoneNumberId : null,
 			fromNumber: from,
 			body: text,
-			hasMedia: Array.isArray(resource.media) && resource.media.length > 0,
+			media: parseMediaArray(resource.media),
 		};
 	}
 
@@ -45,9 +72,10 @@ function parseInboundMessage(payload: unknown): ParsedInboundMessage | null {
 		if (typeof from !== "string" || typeof body !== "string") return null;
 		return {
 			quoMessageId: typeof object.id === "string" ? object.id : null,
+			quoPhoneNumberId: typeof object.phoneNumberId === "string" ? object.phoneNumberId : null,
 			fromNumber: from,
 			body,
-			hasMedia: Array.isArray(object.media) && object.media.length > 0,
+			media: parseMediaArray(object.media),
 		};
 	}
 
@@ -120,6 +148,7 @@ class WebhooksQuoService {
 			conversation = await prisma.smsConversation.create({
 				data: {
 					phoneNumber: normalizedFrom,
+					quoPhoneNumberId: parsed.quoPhoneNumberId,
 					patientId: matchedPatient?.id ?? null,
 					lastMessageAt: new Date(),
 					lastMessagePreview: parsed.body.slice(0, 200),
@@ -133,6 +162,9 @@ class WebhooksQuoService {
 					// Never move a conversation FROM one patient TO another here —
 					// only fill in a link that was previously null (unmatched bucket).
 					patientId: conversation.patientId ?? matchedPatient?.id ?? null,
+					// Same rule for the owning business number: fill a null, never
+					// re-point a thread that already belongs to a number.
+					quoPhoneNumberId: conversation.quoPhoneNumberId ?? parsed.quoPhoneNumberId,
 					lastMessageAt: new Date(),
 					lastMessagePreview: parsed.body.slice(0, 200),
 					unreadCount: { increment: 1 },
@@ -147,6 +179,7 @@ class WebhooksQuoService {
 				body: parsed.body,
 				status: "received",
 				quoMessageId: parsed.quoMessageId,
+				media: parsed.media.length > 0 ? JSON.parse(JSON.stringify(parsed.media)) : undefined,
 			},
 		});
 
@@ -167,7 +200,12 @@ class WebhooksQuoService {
 				? `Inbound SMS received from ${label}`
 				: `Inbound SMS received from unmatched number ${normalizedFrom}`,
 			type: "auto",
-			metadata: { conversationId: conversation.id, phoneNumber: normalizedFrom, hasMedia: parsed.hasMedia },
+			metadata: {
+				conversationId: conversation.id,
+				phoneNumber: normalizedFrom,
+				quoPhoneNumberId: conversation.quoPhoneNumberId,
+				mediaCount: parsed.media.length,
+			},
 		});
 
 		if (candidates.length > 1) {
@@ -192,12 +230,10 @@ class WebhooksQuoService {
 			});
 		}
 
-		if (parsed.hasMedia) {
-			// MMS is explicitly out of scope (plan constraint #7) — the text
-			// portion is still stored above; only the media itself is skipped.
-			logger.warn(
-				{ conversationId: conversation.id, messageId: message.id },
-				"Quo webhook: inbound message included media (MMS) — text stored, media not downloaded/stored",
+		if (parsed.media.length > 0) {
+			logger.info(
+				{ conversationId: conversation.id, messageId: message.id, mediaCount: parsed.media.length },
+				"Quo webhook: inbound message included media — stored (URLs only, not proxied/re-hosted)",
 			);
 		}
 

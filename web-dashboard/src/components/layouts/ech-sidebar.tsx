@@ -130,8 +130,8 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
           {/* Text */}
           {!isCollapsed && (
             <div className="flex-1 min-w-0">
-              <p className="text-white text-[12px] font-bold tracking-tight leading-tight">Elevated Health</p>
-              <p className="text-[#65BD6C] text-[8px] font-semibold uppercase tracking-widest leading-tight mt-0.5">Care Dashboard</p>
+              <p className=" text-[16px] font-bold  text-black tracking-tight leading-tight">Elevated Health</p>
+              <p className="text-[#65BD6C] text-[12px] font-semibold uppercase tracking-widest leading-tight mt-0.5">Care Dashboard</p>
             </div>
           )}
         </div>        <button

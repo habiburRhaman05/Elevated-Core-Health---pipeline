@@ -1,21 +1,25 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   Check,
   ChevronDown,
   FolderClosed,
+  Inbox,
+  List,
   Loader2,
   MessageSquare,
   MoreHorizontal,
   Phone,
   Search,
   SlidersHorizontal,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { cn, formatConversationListTime } from "@/lib/utils"
-import { useConversations } from "@/hooks/query/useMessaging"
+import { avatarColor, cn, formatConversationListTime } from "@/lib/utils"
+import { useConversations, useMessagingNumbers } from "@/hooks/query/useMessaging"
 import { Avatar } from "./avatar"
 import { MessageThread } from "./message-thread"
 import { ConversationContactPanel } from "./conversation-contact-panel"
@@ -55,15 +59,263 @@ function DummyIconButton({
   )
 }
 
+/** Explicit "All Inboxes" is written as this sentinel rather than just
+ *  removing the `number` param, so it's distinguishable from "the user
+ *  hasn't chosen anything yet" (a totally absent param) - see the
+ *  first-visit default below. */
+const ALL_NUMBERS_PARAM = "all"
+
 /**
- * Central "Messages" inbox - three panels (conversation list / active thread
- * / contact panel), matching the reference UI the client supplied. Shared
- * between the VA and admin dashboards via two thin page.tsx wrappers.
+ * Keeps the selected business number in the `?number=` query param instead
+ * of only component state, so a refresh or a shared link lands on the same
+ * number - same idea as the board's `?claim=` param.
  *
- * Panels 2 and 3 are siblings, not nested: MessageThread stays layout-neutral
- * so the patient modal's Messages tab can keep reusing it *without* the
- * contact panel, per the build plan.
+ * `null` means "All numbers". On a first-ever visit (no `number` param at
+ * all) this defaults to the Secondary (restricted) number if one exists,
+ * rather than "All" - an explicit "All Inboxes" click writes the
+ * ALL_NUMBERS_PARAM sentinel, so that choice sticks across refreshes
+ * instead of being re-defaulted away.
  */
+function useSelectedNumberParam(
+  numbers: { phoneNumberId: string; messagingCapable: boolean }[],
+): [string | null, (id: string | null) => void] {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const rawUrlValue = searchParams.get("number")
+  const urlValue = rawUrlValue === ALL_NUMBERS_PARAM ? null : rawUrlValue
+
+  const setSelected = useCallback(
+    (id: string | null) => {
+      const params = new URLSearchParams(searchParams.toString())
+      params.set("number", id ?? ALL_NUMBERS_PARAM)
+      const qs = params.toString()
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+    },
+    [router, pathname, searchParams],
+  )
+
+  // Drop a stale/unrecognized id (e.g. a number that's since been removed
+  // from the workspace) once the real list is known - falls back to "All".
+  useEffect(() => {
+    if (!urlValue || numbers.length === 0) return
+    if (!numbers.some((n) => n.phoneNumberId === urlValue)) setSelected(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numbers, urlValue])
+
+  // First-ever visit only (param truly absent, not even the "all" sentinel):
+  // default to the Secondary number. Runs at most once per URL - as soon as
+  // any selection (including explicit "All") is made, rawUrlValue is never
+  // null again, so this never fires again for that URL.
+  useEffect(() => {
+    if (rawUrlValue !== null || numbers.length === 0) return
+    const secondary = numbers.find((n) => !n.messagingCapable)
+    if (secondary) setSelected(secondary.phoneNumberId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numbers, rawUrlValue])
+
+  const valid = urlValue && numbers.some((n) => n.phoneNumberId === urlValue)
+  return [valid ? urlValue : null, setSelected]
+}
+
+/**
+ * "Inbox" dropdown/select - a single collapsed control showing the current
+ * selection, opening a menu of every number on click (not a static list).
+ * Hidden entirely with 0-1 numbers (requirement #4 - nothing to
+ * disambiguate). "All Inboxes" is an addition beyond the reference
+ * screenshot: it's the only way pre-multi-number conversations
+ * (quoPhoneNumberId: null) stay reachable.
+ */
+function NumberToggle({
+  numbers,
+  selected,
+  onSelect,
+  unreadByNumber,
+  totalUnread,
+}: {
+  numbers: { phoneNumberId: string; formattedNumber: string; messagingCapable: boolean }[]
+  selected: string | null
+  onSelect: (id: string | null) => void
+  unreadByNumber: Record<string, number>
+  totalUnread: number
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Same open/close pattern as EmojiPicker/AttachmentPicker - outside click
+  // or Escape closes it.
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("mousedown", onPointerDown)
+    document.addEventListener("keydown", onKeyDown)
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown)
+      document.removeEventListener("keydown", onKeyDown)
+    }
+  }, [open])
+
+  if (numbers.length < 2) return null
+
+  const current = numbers.find((n) => n.phoneNumberId === selected)
+  const currentLabel = current ? (current.messagingCapable ? "Primary" : "Secondary") : "All Inboxes"
+  const currentSublabel = current ? current.formattedNumber : `${numbers.length} numbers`
+  const currentUnread = current ? (unreadByNumber[current.phoneNumberId] ?? 0) : totalUnread
+  const currentIconClassName = current ? avatarColor(current.phoneNumberId).bg : "bg-[#374151]"
+
+  return (
+    <div className="relative px-3 pt-2.5 pb-1" ref={containerRef}>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF] px-1 mb-1.5">Inbox</p>
+
+      {/* Collapsed trigger - shows the current selection, click to open the dropdown */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 bg-white transition-colors text-left"
+      >
+        <div
+          className={cn(
+            "w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0",
+            currentIconClassName,
+          )}
+        >
+          {current ? <Phone className="w-4 h-4" /> : <Inbox className="w-4 h-4" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-bold text-[#111827] truncate">{currentLabel}</p>
+            {current && !current.messagingCapable && (
+              <span className="shrink-0 px-1 py-[1px] rounded bg-gray-100 text-[8px] font-bold uppercase tracking-wide text-[#9CA3AF]">
+                No SMS
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-[#6B7280] truncate">{currentSublabel}</p>
+        </div>
+        {currentUnread > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#CC3333] text-white text-[10px] font-bold shrink-0">
+            {currentUnread}
+          </span>
+        )}
+        <ChevronDown className={cn("w-3.5 h-3.5 text-[#9CA3AF] shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div className="absolute left-3 right-3 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-50 p-1 space-y-0.5">
+          <InboxRow
+            icon={<Inbox className="w-4 h-4" />}
+            iconClassName="bg-[#374151]"
+            label="All Inboxes"
+            sublabel={`${numbers.length} numbers`}
+            active={selected === null}
+            unread={totalUnread}
+            onClick={() => {
+              onSelect(null)
+              setOpen(false)
+            }}
+          />
+          {numbers.map((n) => (
+            <InboxRow
+              key={n.phoneNumberId}
+              icon={<Phone className="w-4 h-4" />}
+              iconClassName={avatarColor(n.phoneNumberId).bg}
+              // Both are literally named "Primary" in Quo itself, so relabel
+              // for our own UI: the one that can actually send is "Primary",
+              // any other (e.g. restricted) is "Secondary".
+              label={n.messagingCapable ? "Primary" : "Secondary"}
+              sublabel={n.formattedNumber}
+              active={selected === n.phoneNumberId}
+              unread={unreadByNumber[n.phoneNumberId] ?? 0}
+              // Still selectable - viewing a restricted inbox's history is
+              // fine, same as Quo's own dashboard. Only sending is blocked
+              // (server-side, and reflected in the composer once selected).
+              messagingCapable={n.messagingCapable}
+              onClick={() => {
+                onSelect(n.phoneNumberId)
+                setOpen(false)
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InboxRow({
+  icon,
+  iconClassName,
+  label,
+  sublabel,
+  active,
+  unread,
+  messagingCapable,
+  onClick,
+}: {
+  icon: React.ReactNode
+  iconClassName: string
+  label: string
+  sublabel: string
+  active: boolean
+  unread: number
+  /** Undefined for "All Inboxes", which is never restricted. */
+  messagingCapable?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={messagingCapable === false ? `${sublabel} can't send SMS (restricted)` : undefined}
+      className={cn(
+        "w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg transition-colors text-left",
+        active ? "bg-[#EBF7EC]" : "hover:bg-gray-50",
+      )}
+    >
+      <div
+        className={cn(
+          "w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0",
+          iconClassName,
+          messagingCapable === false && "opacity-50",
+        )}
+      >
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <p
+            className={cn(
+              "text-xs truncate",
+              active ? "font-bold text-[#036638]" : "font-semibold text-[#111827]",
+              messagingCapable === false && "text-[#9CA3AF]",
+            )}
+          >
+            {label}
+          </p>
+          {messagingCapable === false && (
+            <span className="shrink-0 px-1 py-[1px] rounded bg-gray-100 text-[8px] font-bold uppercase tracking-wide text-[#9CA3AF]">
+              No SMS
+            </span>
+          )}
+        </div>
+        <p className="text-[11px] text-[#6B7280] truncate">{sublabel}</p>
+      </div>
+      {unread > 0 && (
+        <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#CC3333] text-white text-[10px] font-bold shrink-0">
+          {unread}
+        </span>
+      )}
+    </button>
+  )
+}
+
+
 export function MessagingInbox() {
   const [tab, setTab] = useState<InboxTab>("chats")
   const [search, setSearch] = useState("")
@@ -71,17 +323,57 @@ export function MessagingInbox() {
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
+  const [showListDrawer, setShowListDrawer] = useState(false)
+
+  const { data: numbersData } = useMessagingNumbers()
+  const numbers = useMemo(() => numbersData?.numbers ?? [], [numbersData])
+  const [selectedNumberId, setSelectedNumberId] = useSelectedNumberParam(numbers)
+
   const { data, isLoading } = useConversations({
     search: search.trim() || undefined,
     unmatchedOnly: unmatchedOnly || undefined,
+    phoneNumberId: selectedNumberId ?? undefined,
     limit: 100,
   })
+
+  // Unfiltered - same query key the sidebar badge already uses, so this adds
+  // no extra request beyond what's already polling. Needed for the Inboxes
+  // list's per-number unread badges, which must total across ALL numbers
+  // regardless of which one is currently selected.
+  const { data: allData } = useConversations({ limit: 100 })
+  const unreadByNumber = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const c of allData?.conversations ?? []) {
+      if (!c.quoPhoneNumberId || c.unreadCount === 0) continue
+      map[c.quoPhoneNumberId] = (map[c.quoPhoneNumberId] ?? 0) + c.unreadCount
+    }
+    return map
+  }, [allData])
+  const totalUnread = useMemo(
+    () => (allData?.conversations ?? []).reduce((sum, c) => sum + c.unreadCount, 0),
+    [allData],
+  )
+  const numberLabelById = useMemo(
+    () => Object.fromEntries(numbers.map((n) => [n.phoneNumberId, n.formattedNumber])),
+    [numbers],
+  )
 
   const conversations = data?.conversations ?? []
   // Unread is a pure client-side narrowing of the list we already hold - no
   // backend concept of it, so no extra request.
   const visibleConversations = unreadOnly ? conversations.filter((c) => c.unreadCount > 0) : conversations
   const selected = conversations.find((c) => c.id === selectedId) ?? null
+
+  // Which number would this thread actually send from? A reply always goes
+  // out on the thread's own number; a brand-new thread uses whatever the
+  // toggle is set to. Mirrors the same resolution order sendMessage() uses
+  // server-side, so this local check never disagrees with the real gate.
+  const effectiveNumberId = selected?.quoPhoneNumberId ?? selectedNumberId
+  const effectiveNumber = effectiveNumberId ? numbers.find((n) => n.phoneNumberId === effectiveNumberId) : undefined
+  const sendDisabledReason =
+    effectiveNumber && !effectiveNumber.messagingCapable
+      ? `${effectiveNumber.formattedNumber} can't send SMS - its US messaging is restricted on the Quo workspace.`
+      : null
 
   return (
     <div className="flex h-full min-h-0 rounded-2xl border border-gray-100 bg-white overflow-hidden shadow-sm">
@@ -94,12 +386,21 @@ export function MessagingInbox() {
           selectedId ? "hidden sm:flex" : "flex",
         )}
       >
+        <NumberToggle
+          numbers={numbers}
+          selected={selectedNumberId}
+          onSelect={setSelectedNumberId}
+          unreadByNumber={unreadByNumber}
+          totalUnread={totalUnread}
+        />
+
         {/* Chats | Calls | Tasks */}
         <div className="flex items-center justify-between px-3 pt-2.5 border-b border-gray-100 shrink-0">
           <div className="flex items-center gap-4">
             {INBOX_TABS.map((t) => (
               <button
                 key={t.key}
+                type="button"
                 onClick={() => setTab(t.key)}
                 className={cn(
                   "pb-2 text-sm font-semibold border-b-2 transition-colors -mb-px",
@@ -200,6 +501,8 @@ export function MessagingInbox() {
                     conversation={c}
                     active={c.id === selectedId}
                     onClick={() => setSelectedId(c.id)}
+                    numberLabel={c.quoPhoneNumberId ? numberLabelById[c.quoPhoneNumberId] : undefined}
+                    showNumberBadge={numbers.length >= 2 && selectedNumberId === null}
                   />
                 ))
               )}
@@ -211,23 +514,63 @@ export function MessagingInbox() {
       {/* ------------------------------------------------------------- */}
       {/* Panel 2 - active thread                                        */}
       {/* ------------------------------------------------------------- */}
-      <div className={cn("flex-1 min-h-0 flex-col", selectedId ? "flex" : "hidden sm:flex")}>
+      {/* On phone (< sm), an open thread becomes a full-screen fixed overlay
+          - the standard WhatsApp/iMessage pattern - rather than a panel
+          squeezed inside the page's normal padded/scrolling layout. From
+          sm+ it's back to being a regular flex-1 panel in the 3-panel row. */}
+      <div
+        className={cn(
+          "min-h-0 flex-col",
+          selectedId
+            ? "fixed inset-x-0 top-14 bottom-24 z-60 bg-white flex sm:static sm:inset-auto sm:z-auto sm:flex-1"
+            : "hidden sm:flex sm:flex-1",
+        )}
+      >
         {selected ? (
           <>
             <div className="flex items-center gap-2.5 px-3 py-2.5 border-b border-gray-100 shrink-0">
               <button
-                onClick={() => setSelectedId(null)}
+                type="button"
+                onClick={() => {
+                  setSelectedId(null)
+                  setShowListDrawer(false)
+                }}
                 className="sm:hidden p-1 -ml-1 rounded-lg hover:bg-gray-100 text-gray-500"
                 aria-label="Back to conversations"
               >
                 <ArrowLeft className="w-4 h-4" />
+              </button>
+              {/* Quick peek at the full conversation list without leaving this
+                  thread - sm+ already shows the list panel alongside, so this
+                  is phone-only. */}
+              <button
+                type="button"
+                onClick={() => setShowListDrawer(true)}
+                className="sm:hidden p-1 rounded-lg hover:bg-gray-100 text-gray-500"
+                aria-label="Show all conversations"
+                title="All conversations"
+              >
+                <List className="w-4 h-4" />
               </button>
               <Avatar name={selected.patient?.name || selected.phoneNumber} colorKey={selected.id} size="sm" />
               <div className="min-w-0">
                 <p className="text-sm font-bold text-[#111827] truncate">
                   {selected.patient?.name || "Unmatched number"}
                 </p>
-                <p className="text-xs text-[#6B7280] truncate">{selected.phoneNumber}</p>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <p className="text-xs text-[#6B7280] truncate">{selected.phoneNumber}</p>
+                  {numbers.length >= 2 && selected.quoPhoneNumberId && numberLabelById[selected.quoPhoneNumberId] && (
+                    <span
+                      title={`On our ${numberLabelById[selected.quoPhoneNumberId]} business line`}
+                      className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-gray-100 text-[9px] font-semibold text-[#6B7280] shrink-0"
+                    >
+                      <span
+                        className={cn("w-1.5 h-1.5 rounded-full", avatarColor(selected.quoPhoneNumberId).bg)}
+                      />
+                      {numberLabelById[selected.quoPhoneNumberId]}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="ml-auto flex items-center gap-0.5">
                 <DummyIconButton icon={Phone} label="Call" />
@@ -237,7 +580,14 @@ export function MessagingInbox() {
                 <DummyIconButton icon={MoreHorizontal} label="More actions" />
               </div>
             </div>
-            <MessageThread conversation={selected} isActive className="min-h-0" />
+            <MessageThread
+              conversation={selected}
+              isActive
+              phoneNumberId={selectedNumberId ?? undefined}
+              sendDisabledReason={sendDisabledReason}
+              fixedComposerOnMobile
+              className="min-h-0"
+            />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-sm text-[#9CA3AF]">
@@ -255,6 +605,71 @@ export function MessagingInbox() {
       {selected && (
         <div className="hidden xl:flex w-[300px] shrink-0 border-l border-gray-100 flex-col min-h-0">
           <ConversationContactPanel conversation={selected} />
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* Quick-access conversation list drawer (phone only) - lets you    */}
+      {/* jump to another conversation from inside an open thread without  */}
+      {/* leaving it. Above the thread's own z-60 overlay.                 */}
+      {/* ------------------------------------------------------------- */}
+      {showListDrawer && selectedId && (
+        <div className="sm:hidden fixed inset-x-0 top-14 bottom-24 z-100 flex">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setShowListDrawer(false)}
+            className="absolute inset-0 bg-black/40"
+          />
+          <div className="relative w-[85%] max-w-[340px] h-full bg-white flex flex-col shadow-2xl animate-in slide-in-from-left duration-200">
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-gray-100 shrink-0">
+              <p className="text-sm font-bold text-[#111827]">Conversations</p>
+              <button
+                type="button"
+                onClick={() => setShowListDrawer(false)}
+                aria-label="Close"
+                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-3 py-2 border-b border-gray-100 shrink-0">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-[#9CA3AF] absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name or phone..."
+                  className="w-full pl-8 pr-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto scrollbar-brand">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-10">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#036638]" />
+                </div>
+              ) : visibleConversations.length === 0 ? (
+                <div className="text-center py-10 px-4 text-xs text-[#9CA3AF]">No conversations yet</div>
+              ) : (
+                visibleConversations.map((c) => (
+                  <ConversationRow
+                    key={c.id}
+                    conversation={c}
+                    active={c.id === selectedId}
+                    onClick={() => {
+                      setSelectedId(c.id)
+                      setShowListDrawer(false)
+                    }}
+                    numberLabel={c.quoPhoneNumberId ? numberLabelById[c.quoPhoneNumberId] : undefined}
+                    showNumberBadge={numbers.length >= 2 && selectedNumberId === null}
+                  />
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -291,15 +706,23 @@ function ConversationRow({
   conversation,
   active,
   onClick,
+  numberLabel,
+  showNumberBadge,
 }: {
   conversation: SmsConversation
   active: boolean
   onClick: () => void
+  /** This thread's owning business number, formatted for display. */
+  numberLabel?: string
+  /** Only shown in "All Inboxes" view with 2+ numbers - redundant once
+   *  already filtered down to a single number. */
+  showNumberBadge?: boolean
 }) {
   const name = conversation.patient?.name || conversation.phoneNumber
   const unread = conversation.unreadCount > 0
   return (
     <button
+      type="button"
       onClick={onClick}
       className={cn(
         "w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors",
@@ -328,11 +751,22 @@ function ConversationRow({
             </span>
           )}
         </div>
-        {!conversation.patientId && (
-          <span className="inline-block mt-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[9px] font-bold uppercase tracking-wide">
-            Unmatched
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 mt-1">
+          {!conversation.patientId && (
+            <span className="inline-block px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[9px] font-bold uppercase tracking-wide">
+              Unmatched
+            </span>
+          )}
+          {showNumberBadge && numberLabel && (
+            <span
+              title={`Number: ${numberLabel}`}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 text-[#6B7280] text-[9px] font-semibold"
+            >
+              <span className={cn("w-1.5 h-1.5 rounded-full", avatarColor(conversation.quoPhoneNumberId as string).bg)} />
+              {numberLabel}
+            </span>
+          )}
+        </div>
       </div>
     </button>
   )

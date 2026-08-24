@@ -2,6 +2,7 @@ import axiosInstance from "@/lib/axios"
 import { API_ENDPOINTS } from "@/constants"
 import type {
   ApiResponse,
+  MessagingNumber,
   SmsConversation,
   SmsConversationsResponse,
   SmsMessage,
@@ -13,12 +14,21 @@ export interface ListConversationsFilters {
   limit?: number
   search?: string
   unmatchedOnly?: boolean
+  /** Omit for the "All numbers" view. */
+  phoneNumberId?: string
 }
 
 export const MessagingService = {
   async getStatus(): Promise<{ configured: boolean }> {
     const { data } = await axiosInstance.get<ApiResponse<{ configured: boolean }>>(
       API_ENDPOINTS.MESSAGING.STATUS,
+    )
+    return data.data
+  },
+
+  async listNumbers(): Promise<{ numbers: MessagingNumber[] }> {
+    const { data } = await axiosInstance.get<ApiResponse<{ numbers: MessagingNumber[] }>>(
+      API_ENDPOINTS.MESSAGING.NUMBERS,
     )
     return data.data
   },
@@ -46,10 +56,14 @@ export const MessagingService = {
     return data.data
   },
 
-  async sendMessage(conversationId: string, content: string): Promise<{ message: SmsMessage }> {
+  async sendMessage(
+    conversationId: string,
+    content: string,
+    phoneNumberId?: string,
+  ): Promise<{ message: SmsMessage }> {
     const { data } = await axiosInstance.post<ApiResponse<{ message: SmsMessage }>>(
       API_ENDPOINTS.MESSAGING.SEND(conversationId),
-      { content },
+      { content, ...(phoneNumberId ? { phoneNumberId } : {}) },
     )
     return data.data
   },

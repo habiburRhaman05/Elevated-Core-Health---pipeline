@@ -88,6 +88,7 @@ export const API_ENDPOINTS = {
   },
   MESSAGING: {
     STATUS: "/messaging/status",
+    NUMBERS: "/messaging/numbers",
     CONVERSATIONS: "/messaging/conversations",
     CONVERSATION_BY_PATIENT: (patientId: string) => `/messaging/conversations/by-patient/${patientId}`,
     MESSAGES: (conversationId: string) => `/messaging/conversations/${conversationId}/messages`,
@@ -133,6 +134,7 @@ export const QUERY_KEYS = {
   STAGES: ["stages"] as const,
   MESSAGING: {
     STATUS: ["messaging", "status"] as const,
+    NUMBERS: ["messaging", "numbers"] as const,
     // Prefix key — invalidating this refreshes the conversation list AND
     // every open thread/by-patient query below it.
     ALL: ["messaging"] as const,

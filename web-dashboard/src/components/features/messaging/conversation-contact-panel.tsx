@@ -4,6 +4,7 @@ import { useMemo, useState } from "react"
 import {
   Building2,
   Eye,
+  Inbox,
   Link2,
   Loader2,
   Mail,
@@ -17,9 +18,9 @@ import {
   UserRound,
 } from "lucide-react"
 import { toast } from "sonner"
-import { cn } from "@/lib/utils"
+import { avatarColor, cn } from "@/lib/utils"
 import { usePatient, usePatients, useAddNote, useDeleteNote } from "@/hooks/query/usePatients"
-import { useLinkConversationPatient } from "@/hooks/query/useMessaging"
+import { useLinkConversationPatient, useMessagingNumbers } from "@/hooks/query/useMessaging"
 import { Avatar } from "./avatar"
 import type { SmsConversation } from "@/types"
 
@@ -43,6 +44,11 @@ export function ConversationContactPanel({ conversation }: ConversationContactPa
   const isLinked = !!conversation.patientId
   const displayName = conversation.patient?.name || conversation.phoneNumber
 
+  // Which of our business numbers this thread belongs to - shown regardless
+  // of patient-link state, since it's about the conversation, not the patient.
+  const { data: numbersData } = useMessagingNumbers()
+  const owningNumber = (numbersData?.numbers ?? []).find((n) => n.phoneNumberId === conversation.quoPhoneNumberId)
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto scrollbar-brand">
       {/* Header */}
@@ -58,6 +64,17 @@ export function ConversationContactPanel({ conversation }: ConversationContactPa
           {isLinked ? displayName : conversation.phoneNumber}
         </p>
         {!isLinked && <p className="mt-1 text-xs text-[#9CA3AF]">Not linked to a patient</p>}
+
+        {owningNumber && (
+          <span
+            title={`This thread is on our ${owningNumber.formattedNumber} business line`}
+            className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full bg-gray-100 text-[10px] font-semibold text-[#374151]"
+          >
+            <span className={cn("w-1.5 h-1.5 rounded-full", avatarColor(owningNumber.phoneNumberId).bg)} />
+            <Inbox className="w-3 h-3 text-[#9CA3AF]" />
+            {owningNumber.formattedNumber}
+          </span>
+        )}
 
         {isLinked && (
           <div className="flex items-center gap-2 mt-3">

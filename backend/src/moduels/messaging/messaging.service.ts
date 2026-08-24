@@ -3,14 +3,17 @@ import { StatusCodes } from "http-status-codes";
 import { audit, type RequestContext } from "@/lib/audit";
 import { normalizeE164 } from "@/lib/phone";
 import {
+	getMessagingCapableNumbers,
+	getWorkspaceNumbers,
 	isQuoConfigured,
+	listCalls,
 	listQuoConversations,
 	listQuoMessages,
+	type MessagingCapableNumber,
 	QuoApiError,
 	sendMessage as quoSendMessage,
 } from "@/lib/quo";
 import type { AuthenticatedUser } from "@/lib/types";
-import { env } from "@/utils/envConfig";
 import { logger } from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { ServiceResponse } from "@/utils/serviceResponse";
@@ -20,16 +23,20 @@ const noContext: RequestContext = { ip: null, userAgent: null };
 /**
  * Same idea as auth.service.ts's isCloudinaryConfigured check — every route
  * that would actually talk to Quo fails clearly and immediately instead of
- * silently doing nothing (or crashing) when the env vars aren't set yet.
+ * silently doing nothing (or crashing) when it isn't set up yet.
  */
 const NOT_CONFIGURED_MESSAGE =
-	"SMS messaging isn't configured on this server yet. An admin needs to set QUO_API_KEY, QUO_FROM_NUMBER, and QUO_USER_ID.";
+	"SMS messaging isn't configured on this server yet. An admin needs to set QUO_API_KEY and have at least one US-messaging-enabled number on the Quo workspace.";
+
+const NO_NUMBER_MESSAGE =
+	"No Quo business number was selected for this message, and the workspace has more than one to choose from.";
 
 interface ConversationWithPatient {
 	id: string;
 	phoneNumber: string;
 	patientId: string | null;
 	quoContactId: string | null;
+	quoPhoneNumberId: string | null;
 	lastMessageAt: Date | null;
 	lastMessagePreview: string | null;
 	unreadCount: number;
@@ -54,6 +61,7 @@ function conversationDto(conversation: ConversationWithPatient) {
 					name: [conversation.patient.firstName, conversation.patient.lastName].filter(Boolean).join(" ").trim(),
 				}
 			: null,
+		quoPhoneNumberId: conversation.quoPhoneNumberId,
 		lastMessageAt: conversation.lastMessageAt,
 		lastMessagePreview: conversation.lastMessagePreview,
 		unreadCount: conversation.unreadCount,
@@ -86,40 +94,58 @@ const SYNC_COOLDOWN_MS = 60_000;
  * Errors are logged but never block the user.
  */
 async function syncConversationsFromQuo(): Promise<void> {
-	if (!isQuoConfigured || !env.QUO_FROM_NUMBER || !env.QUO_USER_ID) return;
+	if (!isQuoConfigured) return;
 
 	const now = Date.now();
 	if (now - lastSyncAt < SYNC_COOLDOWN_MS) return;
 	lastSyncAt = now;
 
 	try {
-		const quoConversations = await listQuoConversations(env.QUO_USER_ID);
-		logger.info({ count: quoConversations.length }, "Synced Quo conversations");
+		// One pass per business number - including restricted ones, so a
+		// restricted inbox still shows its real history when viewed (it just
+		// can't be sent from). Each synced thread is stamped with the number
+		// it actually belongs to instead of all landing on one.
+		const numbers = await getWorkspaceNumbers();
+		for (const number of numbers) {
+			if (!number.userId) continue;
+			const quoConversations = await listQuoConversations(number.userId);
+			logger.info({ count: quoConversations.length, phoneNumberId: number.phoneNumberId }, "Synced Quo conversations");
 
-		for (const quoConv of quoConversations) {
-			const participants = quoConv.participants ?? [];
-			if (participants.length === 0) continue;
+			for (const quoConv of quoConversations) {
+				const participants = quoConv.participants ?? [];
+				if (participants.length === 0) continue;
 
-			const patientPhone = participants.find((p) => p !== env.QUO_FROM_NUMBER) ?? participants[0];
+				const patientPhone = participants.find((p) => p !== number.phoneNumber) ?? participants[0];
 
-			const existing = await prisma.smsConversation.findUnique({
-				where: { phoneNumber: patientPhone },
-			});
-
-			if (!existing) {
-				await prisma.smsConversation.create({
-					data: {
-						phoneNumber: patientPhone,
-						lastMessageAt: quoConv.lastActivityAt ? new Date(quoConv.lastActivityAt) : new Date(),
-						lastMessagePreview: quoConv.name ?? null,
-					},
+				const existing = await prisma.smsConversation.findUnique({
+					where: { phoneNumber: patientPhone },
 				});
-			} else if (quoConv.lastActivityAt) {
-				const quoActivity = new Date(quoConv.lastActivityAt);
-				if (!existing.lastMessageAt || quoActivity > existing.lastMessageAt) {
+
+				if (!existing) {
+					await prisma.smsConversation.create({
+						data: {
+							phoneNumber: patientPhone,
+							quoPhoneNumberId: quoConv.phoneNumberId ?? number.phoneNumberId,
+							lastMessageAt: quoConv.lastActivityAt ? new Date(quoConv.lastActivityAt) : new Date(),
+							lastMessagePreview: quoConv.name ?? null,
+						},
+					});
+					continue;
+				}
+
+				const quoActivity = quoConv.lastActivityAt ? new Date(quoConv.lastActivityAt) : null;
+				const bumpActivity = quoActivity && (!existing.lastMessageAt || quoActivity > existing.lastMessageAt);
+				// Backfill the owning number onto pre-multi-number rows, but never
+				// re-point a thread that already has one.
+				const backfillNumber = !existing.quoPhoneNumberId;
+
+				if (bumpActivity || backfillNumber) {
 					await prisma.smsConversation.update({
 						where: { id: existing.id },
-						data: { lastMessageAt: quoActivity },
+						data: {
+							...(bumpActivity ? { lastMessageAt: quoActivity as Date } : {}),
+							...(backfillNumber ? { quoPhoneNumberId: quoConv.phoneNumberId ?? number.phoneNumberId } : {}),
+						},
 					});
 				}
 			}
@@ -133,18 +159,46 @@ async function syncConversationsFromQuo(): Promise<void> {
  * Syncs messages for a SINGLE conversation from Quo into the local DB.
  * Called on-demand when a user opens a specific thread (getMessages).
  */
-async function syncMessagesForConversation(conversationId: string, patientPhone: string): Promise<void> {
-	if (!isQuoConfigured || !env.QUO_PHONE_NUMBER_ID) return;
+async function syncMessagesForConversation(
+	conversationId: string,
+	patientPhone: string,
+	quoPhoneNumberId: string | null,
+): Promise<void> {
+	if (!isQuoConfigured) return;
+
+	// Legacy threads (created before multi-number support) have no owning
+	// number recorded; fall back to the workspace's sole number when there is
+	// exactly one, otherwise there is nothing safe to guess.
+	let phoneNumberId = quoPhoneNumberId;
+	if (!phoneNumberId) {
+		const numbers = await getWorkspaceNumbers();
+		if (numbers.length !== 1) return;
+		phoneNumberId = numbers[0].phoneNumberId;
+	}
 
 	try {
 		const quoMessages = await listQuoMessages({
-			phoneNumberId: env.QUO_PHONE_NUMBER_ID,
+			phoneNumberId,
 			participants: [patientPhone],
 		});
 
 		for (const quoMsg of quoMessages) {
+			const quoMedia = quoMsg.media && quoMsg.media.length > 0 ? quoMsg.media : null;
 			const existing = quoMsg.id ? await prisma.smsMessage.findUnique({ where: { quoMessageId: quoMsg.id } }) : null;
-			if (existing) continue;
+
+			if (existing) {
+				// Backfill media onto rows that were synced BEFORE the media
+				// column existed. Without this the `continue` below would skip
+				// them forever, so every already-synced message would show up
+				// with its attachments permanently missing.
+				if (quoMedia && existing.media === null) {
+					await prisma.smsMessage.update({
+						where: { id: existing.id },
+						data: { media: JSON.parse(JSON.stringify(quoMedia)) },
+					});
+				}
+				continue;
+			}
 
 			await prisma.smsMessage.create({
 				data: {
@@ -154,11 +208,57 @@ async function syncMessagesForConversation(conversationId: string, patientPhone:
 					status: quoMsg.status ?? "received",
 					quoMessageId: quoMsg.id,
 					createdAt: quoMsg.createdAt ? new Date(quoMsg.createdAt) : undefined,
+					media: quoMedia ? JSON.parse(JSON.stringify(quoMedia)) : undefined,
 				},
 			});
 		}
 	} catch (err) {
 		logger.warn({ err, conversationId }, "Failed to sync messages for conversation from Quo");
+	}
+}
+
+/**
+ * Syncs call history for a SINGLE conversation from Quo into the local DB -
+ * same on-demand, fire-and-forget pattern as syncMessagesForConversation.
+ * A call with no usable participant number (Quo returns this occasionally -
+ * seen live, `participants: []`) is skipped: there's nothing to attribute it
+ * to, and guessing would risk showing it under the wrong patient's thread.
+ */
+async function syncCallsForConversation(
+	conversationId: string,
+	patientPhone: string,
+	quoPhoneNumberId: string | null,
+): Promise<void> {
+	if (!isQuoConfigured) return;
+
+	let phoneNumberId = quoPhoneNumberId;
+	if (!phoneNumberId) {
+		const numbers = await getWorkspaceNumbers();
+		if (numbers.length !== 1) return;
+		phoneNumberId = numbers[0].phoneNumberId;
+	}
+
+	try {
+		const quoCalls = await listCalls({ phoneNumberId, participants: [patientPhone] });
+
+		for (const quoCall of quoCalls) {
+			if (!quoCall.id || (quoCall.participants ?? []).length === 0) continue;
+			const existing = await prisma.smsCallLog.findUnique({ where: { quoCallId: quoCall.id } });
+			if (existing) continue;
+
+			await prisma.smsCallLog.create({
+				data: {
+					conversationId,
+					quoCallId: quoCall.id,
+					direction: quoCall.direction,
+					status: quoCall.status,
+					durationSeconds: typeof quoCall.duration === "number" ? quoCall.duration : null,
+					createdAt: quoCall.createdAt ? new Date(quoCall.createdAt) : new Date(),
+				},
+			});
+		}
+	} catch (err) {
+		logger.warn({ err, conversationId }, "Failed to sync calls for conversation from Quo");
 	}
 }
 
@@ -168,9 +268,39 @@ class MessagingService {
 	 * proactively (banner on the inbox / modal tab) instead of only after a
 	 * VA already tried to send and got a failure back.
 	 */
-	getStatus() {
-		const configured = isQuoConfigured && Boolean(env.QUO_FROM_NUMBER) && Boolean(env.QUO_USER_ID);
-		return ServiceResponse.success("Messaging status retrieved.", { configured });
+	async getStatus() {
+		// "Configured" now means: we can reach Quo AND the workspace has at
+		// least one number that is actually allowed to send US SMS.
+		const numbers = isQuoConfigured ? await getMessagingCapableNumbers() : [];
+		return ServiceResponse.success("Messaging status retrieved.", {
+			configured: isQuoConfigured && numbers.length > 0,
+			numberCount: numbers.length,
+		});
+	}
+
+	/**
+	 * Every business number on the workspace, for the Inboxes toggle - same
+	 * as Quo's own dashboard, which lists every inbox regardless of whether
+	 * it can send. Each entry carries `messagingCapable` so the client can
+	 * show/disable sending accordingly; it is informational only. The actual
+	 * send gate is enforced separately in sendMessage() against
+	 * getMessagingCapableNumbers(), never against this list, so a restricted
+	 * number showing up here can still never be used to send.
+	 */
+	async listNumbers() {
+		if (!isQuoConfigured) {
+			return ServiceResponse.success("Messaging is not configured.", { numbers: [] });
+		}
+		const numbers = await getWorkspaceNumbers();
+		return ServiceResponse.success("Numbers retrieved.", {
+			numbers: numbers.map((n) => ({
+				id: n.id,
+				phoneNumberId: n.phoneNumberId,
+				formattedNumber: n.formattedNumber,
+				userId: n.userId,
+				messagingCapable: n.messagingCapable,
+			})),
+		});
 	}
 
 	/** Paginated, ordered by most recent activity — the central inbox list. */
@@ -183,9 +313,15 @@ class MessagingService {
 		const limit = Math.min(100, Math.max(1, Number(rawQuery.limit) || 50));
 		const search = typeof rawQuery.search === "string" ? rawQuery.search.trim() : "";
 		const unmatchedOnly = rawQuery.unmatchedOnly === true || rawQuery.unmatchedOnly === "true";
+		const phoneNumberId = typeof rawQuery.phoneNumberId === "string" ? rawQuery.phoneNumberId.trim() : "";
 
 		const where: Record<string, unknown> = {};
 		if (unmatchedOnly) where.patientId = null;
+		// Omitting phoneNumberId = the inbox's "All numbers" view, which is also
+		// the only place pre-multi-number rows (quoPhoneNumberId: null) appear.
+		// Filtering to a specific number is strict, so legacy rows don't get
+		// duplicated under every number.
+		if (phoneNumberId) where.quoPhoneNumberId = phoneNumberId;
 		if (search) {
 			where.OR = [
 				{ phoneNumber: { contains: search } },
@@ -261,14 +397,17 @@ class MessagingService {
 		const conversation = await prisma.smsConversation.findUnique({ where: { id: conversationId } });
 		if (!conversation) return ServiceResponse.failure("Conversation not found.", null, StatusCodes.NOT_FOUND);
 
-		// On-demand sync: pull messages for THIS conversation from Quo before
-		// querying the local DB. Fire-and-forget if it fails.
-		syncMessagesForConversation(conversationId, conversation.phoneNumber).catch(() => {});
+		// On-demand sync: pull messages and calls for THIS conversation from Quo
+		// before querying the local DB. Fire-and-forget if it fails.
+		syncMessagesForConversation(conversationId, conversation.phoneNumber, conversation.quoPhoneNumberId).catch(
+			() => {},
+		);
+		syncCallsForConversation(conversationId, conversation.phoneNumber, conversation.quoPhoneNumberId).catch(() => {});
 
 		const page = Math.max(1, Number(rawQuery.page) || 1);
 		const limit = Math.min(200, Math.max(1, Number(rawQuery.limit) || 50));
 
-		const [messages, total] = await Promise.all([
+		const [messages, total, calls] = await Promise.all([
 			prisma.smsMessage.findMany({
 				where: { conversationId },
 				orderBy: { createdAt: "asc" },
@@ -279,9 +418,13 @@ class MessagingService {
 				include: { sentByUser: { select: { id: true, name: true } } },
 			}),
 			prisma.smsMessage.count({ where: { conversationId } }),
+			// Calls aren't paginated separately - the thread is a merged,
+			// chronological view and a conversation's call volume is small
+			// relative to messages, so fetching them all is fine.
+			prisma.smsCallLog.findMany({ where: { conversationId }, orderBy: { createdAt: "asc" } }),
 		]);
 
-		return ServiceResponse.success("Messages retrieved.", { messages, total, page, limit });
+		return ServiceResponse.success("Messages retrieved.", { messages, calls, total, page, limit });
 	}
 
 	/**
@@ -295,6 +438,8 @@ class MessagingService {
 		content: string,
 		actor: AuthenticatedUser,
 		ctx: RequestContext = noContext,
+		/** The number the VA has selected in the inbox toggle, if any. */
+		selectedPhoneNumberId?: string,
 	) {
 		const conversation = await prisma.smsConversation.findUnique({
 			where: { id: conversationId },
@@ -304,11 +449,41 @@ class MessagingService {
 
 		const label = patientLabel(conversation);
 
-		const fromNumber = env.QUO_FROM_NUMBER;
-		const quoUserId = env.QUO_USER_ID;
-		if (!isQuoConfigured || !fromNumber || !quoUserId) {
+		if (!isQuoConfigured) {
 			logger.warn({ conversationId }, "Attempted to send SMS but Quo isn't configured");
 			return ServiceResponse.failure(NOT_CONFIGURED_MESSAGE, null, StatusCodes.SERVICE_UNAVAILABLE);
+		}
+
+		// Which business number does this go out on?
+		//   1. the one this thread already belongs to (a reply must come from
+		//      the number the patient has been texting),
+		//   2. otherwise the one the VA picked in the inbox toggle,
+		//   3. otherwise the only capable number, if there is exactly one.
+		// Every candidate is resolved through getMessagingCapableNumbers(), so a
+		// restricted number can't be used even if its id is passed by hand.
+		const capableNumbers = await getMessagingCapableNumbers();
+		if (capableNumbers.length === 0) {
+			logger.warn({ conversationId }, "Attempted to send SMS but no messaging-capable Quo number is available");
+			return ServiceResponse.failure(NOT_CONFIGURED_MESSAGE, null, StatusCodes.SERVICE_UNAVAILABLE);
+		}
+
+		const requestedId = conversation.quoPhoneNumberId ?? selectedPhoneNumberId ?? null;
+		let sendFrom: MessagingCapableNumber | null = null;
+		if (requestedId) {
+			sendFrom = capableNumbers.find((n) => n.phoneNumberId === requestedId) ?? null;
+			if (!sendFrom) {
+				return ServiceResponse.failure(
+					"That business number can't send SMS (it may be restricted or no longer on the workspace).",
+					null,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+		} else if (capableNumbers.length === 1) {
+			sendFrom = capableNumbers[0];
+		}
+
+		if (!sendFrom) {
+			return ServiceResponse.failure(NO_NUMBER_MESSAGE, null, StatusCodes.BAD_REQUEST);
 		}
 
 		let quoMessageId: string | null = null;
@@ -318,8 +493,8 @@ class MessagingService {
 		try {
 			const result = await quoSendMessage({
 				to: conversation.phoneNumber,
-				from: fromNumber,
-				userId: quoUserId,
+				from: sendFrom.phoneNumber,
+				userId: sendFrom.userId,
 				content,
 			});
 			quoMessageId = result.id || null;
@@ -347,7 +522,13 @@ class MessagingService {
 		if (status === "sent") {
 			await prisma.smsConversation.update({
 				where: { id: conversationId },
-				data: { lastMessageAt: message.createdAt, lastMessagePreview: content.slice(0, 200) },
+				data: {
+					lastMessageAt: message.createdAt,
+					lastMessagePreview: content.slice(0, 200),
+					// Stamp the owning number the first time we send on a thread
+					// that didn't have one (a shell thread, or a legacy row).
+					...(conversation.quoPhoneNumberId ? {} : { quoPhoneNumberId: sendFrom.phoneNumberId }),
+				},
 			});
 		}
 
@@ -364,7 +545,13 @@ class MessagingService {
 				status === "sent"
 					? `${actor.name} sent an SMS to ${label}`
 					: `${actor.name} tried to send an SMS to ${label} — it failed (${errorMessage})`,
-			metadata: { conversationId, phoneNumber: conversation.phoneNumber, status },
+			metadata: {
+				conversationId,
+				phoneNumber: conversation.phoneNumber,
+				status,
+				fromNumber: sendFrom.formattedNumber,
+				quoPhoneNumberId: sendFrom.phoneNumberId,
+			},
 			ip: ctx.ip,
 			userAgent: ctx.userAgent,
 		});
