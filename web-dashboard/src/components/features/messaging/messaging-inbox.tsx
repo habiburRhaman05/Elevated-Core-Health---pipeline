@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  ChevronUp,
   FolderClosed,
   Inbox,
   List,
@@ -326,6 +327,43 @@ export function MessagingInbox() {
 
   const [showListDrawer, setShowListDrawer] = useState(false)
 
+  // WhatsApp-style in-thread search - open state + query live here (the
+  // header row that hosts the input is here too), match COUNT comes back
+  // from MessageThread since it's the one holding the actual messages.
+  const [threadSearchOpen, setThreadSearchOpen] = useState(false)
+  const [threadSearchQuery, setThreadSearchQuery] = useState("")
+  const [threadMatchCount, setThreadMatchCount] = useState(0)
+  const [threadActiveMatchIndex, setThreadActiveMatchIndex] = useState(0)
+
+  const closeThreadSearch = useCallback(() => {
+    setThreadSearchOpen(false)
+    setThreadSearchQuery("")
+    setThreadMatchCount(0)
+    setThreadActiveMatchIndex(0)
+  }, [])
+
+  // Leaving a thread (or switching to another) always closes search rather
+  // than carrying a query into an unrelated conversation.
+  useEffect(() => {
+    closeThreadSearch()
+  }, [selectedId, closeThreadSearch])
+
+  const handleThreadSearchMatchesChange = useCallback((count: number) => {
+    setThreadMatchCount(count)
+    // Jump to the most recent match whenever the result set actually
+    // changes (new query, or the message list itself changed) - a stale
+    // index would otherwise point at a match from the previous query.
+    setThreadActiveMatchIndex(count > 0 ? count - 1 : 0)
+  }, [])
+
+  const goToPrevMatch = useCallback(() => {
+    setThreadActiveMatchIndex((i) => (threadMatchCount === 0 ? 0 : (i - 1 + threadMatchCount) % threadMatchCount))
+  }, [threadMatchCount])
+
+  const goToNextMatch = useCallback(() => {
+    setThreadActiveMatchIndex((i) => (threadMatchCount === 0 ? 0 : (i + 1) % threadMatchCount))
+  }, [threadMatchCount])
+
   const { data: numbersData } = useMessagingNumbers()
   // Real-time push via Pusher — invalidates queries on new messages.
   // Falls back to polling-only (no-op) when Pusher env vars are missing.
@@ -587,33 +625,104 @@ export function MessagingInbox() {
               >
                 <List className="w-4 h-4" />
               </button>
-              <Avatar name={selected.patient?.name || selected.quoContactName || selected.phoneNumber} colorKey={selected.id} size="sm" />
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-[#111827] truncate">
-                  {selected.patient?.name || selected.quoContactName || "Unmatched number"}
-                </p>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <p className="text-xs text-[#6B7280] truncate">{selected.phoneNumber}</p>
-                  {numbers.length >= 2 && selected.quoPhoneNumberId && numberLabelById[selected.quoPhoneNumberId] && (
-                    <span
-                      title={`On our ${numberLabelById[selected.quoPhoneNumberId]} business line`}
-                      className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-gray-100 text-[9px] font-semibold text-[#6B7280] shrink-0"
+              {threadSearchOpen ? (
+                <>
+                  {/* WhatsApp-style swap: the name/avatar block is replaced by
+                      a search input while searching, rather than opening a
+                      separate bar - same header row, same height. */}
+                  <Search className="w-4 h-4 text-[#9CA3AF] shrink-0" />
+                  <input
+                    autoFocus
+                    value={threadSearchQuery}
+                    onChange={(e) => setThreadSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        if (e.shiftKey) goToPrevMatch()
+                        else goToNextMatch()
+                      } else if (e.key === "Escape") {
+                        closeThreadSearch()
+                      }
+                    }}
+                    placeholder="Search in conversation..."
+                    className="flex-1 min-w-0 text-sm text-[#111827] outline-none bg-transparent placeholder:text-[#9CA3AF]"
+                  />
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    {threadSearchQuery.trim() && (
+                      <span className="text-[11px] text-[#9CA3AF] tabular-nums px-1 select-none">
+                        {threadMatchCount > 0 ? `${threadActiveMatchIndex + 1}/${threadMatchCount}` : "0/0"}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={goToPrevMatch}
+                      disabled={threadMatchCount === 0}
+                      aria-label="Previous match"
+                      title="Previous match"
+                      className="p-1 rounded-lg text-[#6B7280] hover:text-[#036638] hover:bg-[#036638]/8 disabled:opacity-30 disabled:pointer-events-none transition-colors"
                     >
-                      <span
-                        className={cn("w-1.5 h-1.5 rounded-full", avatarColor(selected.quoPhoneNumberId).bg)}
-                      />
-                      {numberLabelById[selected.quoPhoneNumberId]}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="ml-auto flex items-center gap-0.5">
-                <DummyIconButton icon={Phone} label="Call" />
-                <DummyIconButton icon={Check} label="Mark done" className="hidden sm:inline-flex" />
-                <DummyIconButton icon={FolderClosed} label="Archive" className="hidden md:inline-flex" />
-                <DummyIconButton icon={Search} label="Search in conversation" className="hidden md:inline-flex" />
-                <DummyIconButton icon={MoreHorizontal} label="More actions" />
-              </div>
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={goToNextMatch}
+                      disabled={threadMatchCount === 0}
+                      aria-label="Next match"
+                      title="Next match"
+                      className="p-1 rounded-lg text-[#6B7280] hover:text-[#036638] hover:bg-[#036638]/8 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeThreadSearch}
+                      aria-label="Close search"
+                      title="Close search"
+                      className="p-1 rounded-lg text-[#6B7280] hover:text-[#036638] hover:bg-[#036638]/8 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Avatar name={selected.patient?.name || selected.quoContactName || selected.phoneNumber} colorKey={selected.id} size="sm" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-[#111827] truncate">
+                      {selected.patient?.name || selected.quoContactName || "Unmatched number"}
+                    </p>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <p className="text-xs text-[#6B7280] truncate">{selected.phoneNumber}</p>
+                      {numbers.length >= 2 && selected.quoPhoneNumberId && numberLabelById[selected.quoPhoneNumberId] && (
+                        <span
+                          title={`On our ${numberLabelById[selected.quoPhoneNumberId]} business line`}
+                          className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-gray-100 text-[9px] font-semibold text-[#6B7280] shrink-0"
+                        >
+                          <span
+                            className={cn("w-1.5 h-1.5 rounded-full", avatarColor(selected.quoPhoneNumberId).bg)}
+                          />
+                          {numberLabelById[selected.quoPhoneNumberId]}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="ml-auto flex items-center gap-0.5">
+                    <DummyIconButton icon={Phone} label="Call" />
+                    <DummyIconButton icon={Check} label="Mark done" className="hidden sm:inline-flex" />
+                    <DummyIconButton icon={FolderClosed} label="Archive" className="hidden md:inline-flex" />
+                    <button
+                      type="button"
+                      onClick={() => setThreadSearchOpen(true)}
+                      title="Search in conversation"
+                      aria-label="Search in conversation"
+                      className="hidden md:inline-flex p-1.5 rounded-lg text-[#6B7280] hover:text-[#036638] hover:bg-[#036638]/8 transition-colors"
+                    >
+                      <Search className="w-[18px] h-[18px]" strokeWidth={1.8} />
+                    </button>
+                    <DummyIconButton icon={MoreHorizontal} label="More actions" />
+                  </div>
+                </>
+              )}
             </div>
             <MessageThread
               conversation={selected}
@@ -622,6 +731,9 @@ export function MessagingInbox() {
               sendDisabledReason={sendDisabledReason}
               fixedComposerOnMobile
               className="min-h-0"
+              searchQuery={threadSearchOpen ? threadSearchQuery : ""}
+              activeMatchIndex={threadActiveMatchIndex}
+              onSearchMatchesChange={handleThreadSearchMatchesChange}
             />
           </>
         ) : (

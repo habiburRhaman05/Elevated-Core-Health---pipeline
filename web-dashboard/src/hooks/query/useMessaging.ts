@@ -102,6 +102,41 @@ export function useSendMessage() {
   })
 }
 
+/**
+ * On-demand call recording fetch — `enabled` gates it so nothing fires until
+ * the "Listen recording" modal is actually open (a plain useQuery, not a
+ * mutation — this is a read, and gating via `enabled` avoids the manual
+ * effect+ref bookkeeping a mutation would need to fire "once per open").
+ * Not polled or long-cached: no recording URL is meant to be reused later,
+ * matching lib/quo.ts's getCallRecordings() note that URL lifetime is
+ * undocumented — a fresh open re-fetches rather than serving a stale one.
+ */
+export function useCallRecording(callLogId: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: QUERY_KEYS.MESSAGING.CALL_RECORDING(callLogId ?? ""),
+    queryFn: () => MessagingService.getCallRecording(callLogId as string),
+    enabled: enabled && !!callLogId,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
+/** On-demand call summary fetch — same enabled-gated pattern as
+ *  useCallRecording. A `status: "absent"` response is a normal outcome (no
+ *  summary generated / plan doesn't support it), not a query error — the
+ *  modal renders that from the returned data, not from isError. */
+export function useCallSummary(callLogId: string | null | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: QUERY_KEYS.MESSAGING.CALL_SUMMARY(callLogId ?? ""),
+    queryFn: () => MessagingService.getCallSummary(callLogId as string),
+    enabled: enabled && !!callLogId,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
 export function useMarkConversationRead() {
   const qc = useQueryClient()
   return useMutation({

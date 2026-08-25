@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   Copy,
   File as FileIcon,
+  FileText,
+  Headphones,
   Loader2,
   MessageSquareOff,
   PhoneIncoming,
@@ -18,8 +20,11 @@ import {
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn, formatDateSeparator, formatMessageTimestamp } from "@/lib/utils"
 import {
+  useCallRecording,
+  useCallSummary,
   useConversationMessages,
   useMarkConversationRead,
   useMessagingStatus,
@@ -65,6 +70,21 @@ interface MessageThreadProps {
    * wrong for anything that isn't already a full-viewport overlay).
    */
   fixedComposerOnMobile?: boolean
+  /**
+   * WhatsApp-style in-thread search — only messages (not call-log entries)
+   * are matched, same as WhatsApp's own in-chat search. Empty/undefined
+   * means "not searching": no highlighting, no scroll-jump, zero overhead.
+   * The header that owns the search input/nav buttons lives in the caller
+   * (messaging-inbox.tsx), so this only needs the current query text.
+   */
+  searchQuery?: string
+  /** Which match (0-indexed, chronological, oldest first) to scroll to and
+   *  highlight distinctly. Ignored while there are no matches. */
+  activeMatchIndex?: number
+  /** Reports how many messages match `searchQuery`, whenever that count
+   *  changes — lets the header show "X of Y" and enable/disable its
+   *  prev/next buttons without duplicating the match computation itself. */
+  onSearchMatchesChange?: (count: number) => void
 }
 
 function isSameCalendarDay(a: string, b: string): boolean {
@@ -103,6 +123,9 @@ export function MessageThread({
   className,
   compact,
   fixedComposerOnMobile,
+  searchQuery,
+  activeMatchIndex,
+  onSearchMatchesChange,
 }: MessageThreadProps) {
   const conversationId = conversation?.id ?? null
   const composerRef = useRef<HTMLDivElement>(null)
@@ -170,6 +193,39 @@ export function MessageThread({
     items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     return items
   }, [messages, calls])
+
+  // WhatsApp-style in-thread search - message ids (chronological, oldest
+  // first, same order as `messages`) whose body contains the query. Call-log
+  // entries are never matched, same as WhatsApp's own in-chat search.
+  const searchMatches = useMemo(() => {
+    const q = (searchQuery ?? "").trim().toLowerCase()
+    if (!q) return []
+    return (messages ?? []).filter((m) => m.body.toLowerCase().includes(q)).map((m) => m.id)
+  }, [messages, searchQuery])
+
+  // Reports on every actual recomputation (query changed, or the message
+  // list itself changed) - a `.length`-only dependency would miss a query
+  // edit that happens to produce the same match count.
+  useEffect(() => {
+    onSearchMatchesChange?.(searchMatches.length)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMatches])
+
+  const activeMatchId =
+    searchMatches.length > 0 ? searchMatches[Math.min(Math.max(activeMatchIndex ?? 0, 0), searchMatches.length - 1)] : null
+
+  // Keyed by message id so the active match can be scrolled into view
+  // without re-querying the DOM - set via a ref callback on each message row.
+  const messageRowRefs = useRef(new Map<string, HTMLDivElement>())
+  const setMessageRowRef = (id: string, el: HTMLDivElement | null) => {
+    if (el) messageRowRefs.current.set(id, el)
+    else messageRowRefs.current.delete(id)
+  }
+
+  useEffect(() => {
+    if (!activeMatchId) return
+    messageRowRefs.current.get(activeMatchId)?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }, [activeMatchId])
 
   // Mark read once per conversation open (not on every poll tick).
   useEffect(() => {
@@ -279,7 +335,11 @@ export function MessageThread({
             const showSeparator = !prev || !isSameCalendarDay(prev.createdAt, item.createdAt)
 
             return (
-              <div key={`${item.kind}-${item.data.id}`} className="space-y-3">
+              <div
+                key={`${item.kind}-${item.data.id}`}
+                ref={item.kind === "message" ? (el) => setMessageRowRef(item.data.id, el) : undefined}
+                className="space-y-3"
+              >
                 {showSeparator && (
                   <div className="flex items-center justify-center pt-1">
                     <span className="px-2.5 py-0.5 rounded-full bg-gray-100 text-[10px] font-medium text-[#6B7280]">
@@ -295,6 +355,8 @@ export function MessageThread({
                     message={item.data}
                     patientLabel={patientLabel}
                     onReply={() => setReplyingTo(item.data)}
+                    highlightQuery={searchQuery}
+                    isActiveMatch={item.data.id === activeMatchId}
                   />
                 )}
               </div>
@@ -383,14 +445,45 @@ function quoteSnippet(body: string): string {
   return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
 }
 
+/** Wraps every case-insensitive occurrence of `query` in `text` with <mark>,
+ *  for the in-thread search highlight. Returns the plain string unchanged
+ *  when there's no query — the common case, so no extra DOM nodes then. */
+function highlightText(text: string, query: string | undefined): React.ReactNode {
+  const q = query?.trim()
+  if (!q) return text
+  const lowerText = text.toLowerCase()
+  const lowerQuery = q.toLowerCase()
+  const parts: React.ReactNode[] = []
+  let cursor = 0
+  let matchAt = lowerText.indexOf(lowerQuery, cursor)
+  while (matchAt !== -1) {
+    if (matchAt > cursor) parts.push(text.slice(cursor, matchAt))
+    parts.push(
+      <mark key={matchAt} className="bg-amber-300/80 text-inherit rounded-sm">
+        {text.slice(matchAt, matchAt + q.length)}
+      </mark>,
+    )
+    cursor = matchAt + q.length
+    matchAt = lowerText.indexOf(lowerQuery, cursor)
+  }
+  if (cursor < text.length) parts.push(text.slice(cursor))
+  return parts
+}
+
 function MessageBubble({
   message,
   patientLabel,
   onReply,
+  highlightQuery,
+  isActiveMatch,
 }: {
   message: SmsMessage
   patientLabel: string
   onReply: () => void
+  /** Set only while the thread's search bar has a non-empty query. */
+  highlightQuery?: string
+  /** This message is the one the search nav is currently focused on. */
+  isActiveMatch?: boolean
 }) {
   const isOutbound = message.direction === "outbound"
   const avatarName = isOutbound ? message.sentByUser?.name || "You" : patientLabel
@@ -408,15 +501,16 @@ function MessageBubble({
             {hasBody && (
               <div
                 className={cn(
-                  "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words",
+                  "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words transition-shadow",
                   isOutbound
                     ? message.status === "failed"
                       ? "bg-[#CC3333]/10 text-[#CC3333] border border-[#CC3333]/30 rounded-br-sm"
                       : "bg-[#036638] text-white rounded-br-sm"
                     : "bg-[#F3F4F6] text-[#1A1B1E] rounded-bl-sm",
+                  isActiveMatch && "ring-2 ring-amber-400 ring-offset-1",
                 )}
               >
-                {message.body}
+                {highlightText(message.body, highlightQuery)}
               </div>
             )}
           </div>
@@ -609,9 +703,10 @@ function formatDuration(seconds: number): string {
 function CallLogEntry({ call, patientLabel }: { call: SmsCallLog; patientLabel: string }) {
   const { label, tone } = describeCall(call)
   const Icon = tone === "missed" ? PhoneMissed : call.direction === "outgoing" ? PhoneOutgoing : PhoneIncoming
+  const [modalMode, setModalMode] = useState<"recording" | "summary" | null>(null)
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="group flex items-center gap-2">
       <Avatar name={patientLabel} colorKey={patientLabel} size="sm" />
       <div
         className={cn(
@@ -635,7 +730,144 @@ function CallLogEntry({ call, patientLabel }: { call: SmsCallLog; patientLabel: 
           </p>
         </div>
       </div>
+
+      {/* Hover menu - a past call may have a recording and/or an AI summary
+          sitting on Quo; both are fetched on-demand only when clicked (see
+          useCallRecording/useCallSummary), never pre-loaded for every call
+          in the thread. */}
+      <CallHoverActions onListen={() => setModalMode("recording")} onSummary={() => setModalMode("summary")} />
+
+      {modalMode && (
+        <CallActionModal call={call} mode={modalMode} onOpenChange={(open) => !open && setModalMode(null)} />
+      )}
     </div>
+  )
+}
+
+function CallHoverActions({ onListen, onSummary }: { onListen: () => void; onSummary: () => void }) {
+  return (
+    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <button
+        type="button"
+        title="Listen recording"
+        aria-label="Listen to call recording"
+        onClick={onListen}
+        className="p-1 rounded-md text-[#9CA3AF] hover:text-[#036638] hover:bg-[#036638]/8 transition-colors"
+      >
+        <Headphones className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        title="Summary"
+        aria-label="View call summary"
+        onClick={onSummary}
+        className="p-1 rounded-md text-[#9CA3AF] hover:text-[#036638] hover:bg-[#036638]/8 transition-colors"
+      >
+        <FileText className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
+/** Loading/empty row shared by both tabs of the modal below. */
+function CallModalStatusRow({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 py-6 justify-center text-sm text-[#6B7280]">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      {label}
+    </div>
+  )
+}
+
+function CallModalEmptyRow({ message }: { message: string }) {
+  return <p className="py-6 text-center text-sm text-[#9CA3AF]">{message}</p>
+}
+
+/**
+ * Recording/summary viewer, opened from CallHoverActions. Fetches exactly
+ * once per open (not on every re-render) — the recording URL Quo returns is
+ * undocumented on lifetime, so it's fetched fresh right here rather than
+ * cached anywhere, and the same on-open-only fetch is used for the summary
+ * for consistency.
+ */
+function CallActionModal({
+  call,
+  mode,
+  onOpenChange,
+}: {
+  call: SmsCallLog
+  mode: "recording" | "summary"
+  onOpenChange: (open: boolean) => void
+}) {
+  const recording = useCallRecording(call.id, mode === "recording")
+  const summary = useCallSummary(call.id, mode === "summary")
+
+  const recordingEntry = recording.data?.recordings?.[0]
+  const summaryResult = summary.data?.summary
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{mode === "recording" ? "Call Recording" : "Call Summary"}</DialogTitle>
+        </DialogHeader>
+
+        {mode === "recording" ? (
+          recording.isLoading ? (
+            <CallModalStatusRow label="Loading recording…" />
+          ) : recording.isError || !recordingEntry?.url ? (
+            <CallModalEmptyRow message="No recording is available for this call." />
+          ) : (
+            <div className="space-y-2">
+              {/* biome-ignore lint/a11y/useMediaCaption: SMS call recordings from Quo have no caption track */}
+              <audio controls autoPlay src={recordingEntry.url} className="w-full" />
+              {recordingEntry.duration != null && (
+                <p className="text-xs text-[#9CA3AF]">Duration: {formatDuration(recordingEntry.duration)}</p>
+              )}
+            </div>
+          )
+        ) : summary.isLoading ? (
+          <CallModalStatusRow label="Loading summary…" />
+        ) : summary.isError || !summaryResult || summaryResult.status !== "completed" ? (
+          <CallModalEmptyRow
+            message={
+              summaryResult?.status === "in-progress"
+                ? "This call's summary is still being generated."
+                : "No summary is available for this call."
+            }
+          />
+        ) : (
+          <div className="space-y-3 text-sm text-[#374151] max-h-[50vh] overflow-y-auto scrollbar-brand">
+            {summaryResult.summary && summaryResult.summary.length > 0 && (
+              <div>
+                <p className="font-semibold text-[#1A1B1E] mb-1">Summary</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {summaryResult.summary.map((line, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: summary lines have no stable id from Quo
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {summaryResult.nextSteps && summaryResult.nextSteps.length > 0 && (
+              <div>
+                <p className="font-semibold text-[#1A1B1E] mb-1">Next steps</p>
+                <ul className="list-disc pl-4 space-y-1">
+                  {summaryResult.nextSteps.map((line, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: summary lines have no stable id from Quo
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(!summaryResult.summary || summaryResult.summary.length === 0) &&
+              (!summaryResult.nextSteps || summaryResult.nextSteps.length === 0) && (
+                <CallModalEmptyRow message="No summary is available for this call." />
+              )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
 

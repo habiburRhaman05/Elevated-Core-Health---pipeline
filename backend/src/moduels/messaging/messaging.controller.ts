@@ -74,4 +74,14 @@ export const messagingController = {
 		const serviceResponse = await messagingService.markConversationRead(param(req, "id"), req.user);
 		handleServiceResponse(serviceResponse, res);
 	},
+
+	async getCallRecording(req: Request, res: Response): Promise<void> {
+		const serviceResponse = await messagingService.getCallRecording(param(req, "callLogId"));
+		handleServiceResponse(serviceResponse, res);
+	},
+
+	async getCallSummary(req: Request, res: Response): Promise<void> {
+		const serviceResponse = await messagingService.getCallSummary(param(req, "callLogId"));
+		handleServiceResponse(serviceResponse, res);
+	},
 };

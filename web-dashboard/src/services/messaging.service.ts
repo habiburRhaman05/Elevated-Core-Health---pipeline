@@ -3,6 +3,8 @@ import { API_ENDPOINTS } from "@/constants"
 import type {
   ApiResponse,
   MessagingNumber,
+  SmsCallRecording,
+  SmsCallSummary,
   SmsConversation,
   SmsConversationsResponse,
   SmsMessage,
@@ -79,6 +81,25 @@ export const MessagingService = {
   async markRead(conversationId: string): Promise<{ conversation: SmsConversation }> {
     const { data } = await axiosInstance.post<ApiResponse<{ conversation: SmsConversation }>>(
       API_ENDPOINTS.MESSAGING.READ(conversationId),
+    )
+    return data.data
+  },
+
+  /** Fetched on-demand — only called when a VA opens the "Listen recording"
+   *  option on a call-log entry, never pre-fetched/cached. */
+  async getCallRecording(callLogId: string): Promise<{ recordings: SmsCallRecording[] }> {
+    const { data } = await axiosInstance.get<ApiResponse<{ recordings: SmsCallRecording[] }>>(
+      API_ENDPOINTS.MESSAGING.CALL_RECORDING(callLogId),
+    )
+    return data.data
+  },
+
+  /** Fetched on-demand — only called when a VA opens the "Summary" option on
+   *  a call-log entry. A `status: "absent"` response is a normal outcome
+   *  (plan doesn't include summaries / not yet generated), not a failure. */
+  async getCallSummary(callLogId: string): Promise<{ summary: SmsCallSummary }> {
+    const { data } = await axiosInstance.get<ApiResponse<{ summary: SmsCallSummary }>>(
+      API_ENDPOINTS.MESSAGING.CALL_SUMMARY(callLogId),
     )
     return data.data
   },

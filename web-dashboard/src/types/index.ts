@@ -276,6 +276,27 @@ export interface SmsMessagesResponse {
   limit: number
 }
 
+/** One recording attached to a call, fetched on-demand from Quo when a VA
+ *  clicks "Listen recording" on a call-log entry — never stored locally. */
+export interface SmsCallRecording {
+  id: string
+  url: string | null
+  type: string | null
+  duration: number | null
+  startTime: string | null
+  status: string | null
+}
+
+/** AI call summary, fetched on-demand — `status: "absent"` means the
+ *  workspace's Quo plan doesn't generate summaries (or this call wasn't
+ *  summarized), not an error; the UI should render a "not available" state. */
+export interface SmsCallSummary {
+  callId: string
+  summary: string[] | null
+  nextSteps: string[] | null
+  status: "absent" | "in-progress" | "completed" | "failed"
+}
+
 export interface CrmContactsResponse {
   contacts: Patient[]
   total: number

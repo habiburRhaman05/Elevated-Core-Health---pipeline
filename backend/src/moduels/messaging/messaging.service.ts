@@ -4,14 +4,18 @@ import { audit, type RequestContext } from "@/lib/audit";
 import { normalizeE164 } from "@/lib/phone";
 import { notifyConversationUpdated, notifyNewMessage } from "@/lib/pusher";
 import {
+	buildContactNameLookup,
+	getCallRecordings,
 	getMessagingCapableNumbers,
 	getWorkspaceNumbers,
 	isQuoConfigured,
 	listCalls,
 	listQuoConversations,
 	listQuoMessages,
+	lookupContactName,
 	type MessagingCapableNumber,
 	QuoApiError,
+	getCallSummary as quoGetCallSummary,
 	sendMessage as quoSendMessage,
 } from "@/lib/quo";
 import type { AuthenticatedUser } from "@/lib/types";
@@ -50,7 +54,8 @@ interface ConversationWithPatient {
 function patientLabel(conversation: Pick<ConversationWithPatient, "patient" | "phoneNumber">): string {
 	if (!conversation.patient) return conversation.phoneNumber;
 	return `${conversation.patient.firstName} ${conversation.patient.lastName ?? ""}`.trim();
-}function conversationDto(conversation: ConversationWithPatient) {
+}
+function conversationDto(conversation: ConversationWithPatient) {
 	return {
 		id: conversation.id,
 		phoneNumber: conversation.phoneNumber,
@@ -61,13 +66,13 @@ function patientLabel(conversation: Pick<ConversationWithPatient, "patient" | "p
 					name: [conversation.patient.firstName, conversation.patient.lastName].filter(Boolean).join(" ").trim(),
 				}
 			: null,
-			quoPhoneNumberId: conversation.quoPhoneNumberId,
-			quoContactName: conversation.quoContactName,
-			lastMessageAt: conversation.lastMessageAt,
-			lastMessagePreview: conversation.lastMessagePreview,
-			unreadCount: conversation.unreadCount,
-			createdAt: conversation.createdAt,
-			updatedAt: conversation.updatedAt,
+		quoPhoneNumberId: conversation.quoPhoneNumberId,
+		quoContactName: conversation.quoContactName,
+		lastMessageAt: conversation.lastMessageAt,
+		lastMessagePreview: conversation.lastMessagePreview,
+		unreadCount: conversation.unreadCount,
+		createdAt: conversation.createdAt,
+		updatedAt: conversation.updatedAt,
 	};
 }
 
@@ -102,6 +107,13 @@ async function syncConversationsFromQuo(): Promise<void> {
 	lastSyncAt = now;
 
 	try {
+		// Built once per sync pass (not per conversation) — a conversation
+		// discovered here (rather than via an inbound webhook, which resolves
+		// its own contact name separately in webhooks-quo.service.ts) would
+		// otherwise never get a display name and stay stuck showing a raw
+		// phone number / "unmatched" forever.
+		const contactNames = await buildContactNameLookup();
+
 		// One pass per business number - including restricted ones, so a
 		// restricted inbox still shows its real history when viewed (it just
 		// can't be sent from). Each synced thread is stamped with the number
@@ -118,6 +130,12 @@ async function syncConversationsFromQuo(): Promise<void> {
 
 				const patientPhone = participants.find((p) => p !== number.phoneNumber) ?? participants[0];
 
+				// Prefer the conversation's own custom name — this is exactly what
+				// Quo's own inbox displays as the thread's title (e.g. "test
+				// contact" for a number with no saved Contact record at all), so it
+				// wins over a Contacts-list match when both exist.
+				const resolvedName = quoConv.name || lookupContactName(contactNames, patientPhone);
+
 				const existing = await prisma.smsConversation.findUnique({
 					where: { phoneNumber: patientPhone },
 				});
@@ -127,8 +145,8 @@ async function syncConversationsFromQuo(): Promise<void> {
 						data: {
 							phoneNumber: patientPhone,
 							quoPhoneNumberId: quoConv.phoneNumberId ?? number.phoneNumberId,
+							quoContactName: resolvedName,
 							lastMessageAt: quoConv.lastActivityAt ? new Date(quoConv.lastActivityAt) : new Date(),
-							lastMessagePreview: quoConv.name ?? null,
 						},
 					});
 					continue;
@@ -139,13 +157,18 @@ async function syncConversationsFromQuo(): Promise<void> {
 				// Backfill the owning number onto pre-multi-number rows, but never
 				// re-point a thread that already has one.
 				const backfillNumber = !existing.quoPhoneNumberId;
+				// Backfill a name onto rows synced before this lookup existed, or
+				// before this contact/custom name existed in Quo yet - never
+				// overwrites one that's already set (e.g. from the webhook path).
+				const backfillName = !existing.quoContactName ? resolvedName : null;
 
-				if (bumpActivity || backfillNumber) {
+				if (bumpActivity || backfillNumber || backfillName) {
 					await prisma.smsConversation.update({
 						where: { id: existing.id },
 						data: {
 							...(bumpActivity ? { lastMessageAt: quoActivity as Date } : {}),
 							...(backfillNumber ? { quoPhoneNumberId: quoConv.phoneNumberId ?? number.phoneNumberId } : {}),
+							...(backfillName ? { quoContactName: backfillName } : {}),
 						},
 					});
 				}
@@ -328,6 +351,10 @@ class MessagingService {
 				{ phoneNumber: { contains: search } },
 				{ patient: { firstName: { contains: search, mode: "insensitive" } } },
 				{ patient: { lastName: { contains: search, mode: "insensitive" } } },
+				// Was missing entirely — a conversation with a resolved Quo contact
+				// name but no linked patient (the common "unmatched" case) could
+				// never be found by name, only by its raw phone number.
+				{ quoContactName: { contains: search, mode: "insensitive" } },
 			];
 		}
 
@@ -624,6 +651,55 @@ class MessagingService {
 			return ServiceResponse.success("Marked as read.", { conversation: conversationDto(conversation) });
 		} catch {
 			return ServiceResponse.failure("Conversation not found.", null, StatusCodes.NOT_FOUND);
+		}
+	}
+
+	/**
+	 * Fetch-on-demand recording lookup for one call in a thread's call log.
+	 * Looks up the local SmsCallLog row by its own id (never trusts a raw Quo
+	 * call id from the client), resolves it to `quoCallId`, and asks Quo for
+	 * the recording right at click-time — no recording URL is ever stored,
+	 * since Quo doesn't document how long they stay valid (see getCallRecordings).
+	 */
+	async getCallRecording(callLogId: string) {
+		const callLog = await prisma.smsCallLog.findUnique({ where: { id: callLogId } });
+		if (!callLog) return ServiceResponse.failure("Call not found.", null, StatusCodes.NOT_FOUND);
+
+		if (!isQuoConfigured) {
+			return ServiceResponse.failure(NOT_CONFIGURED_MESSAGE, null, StatusCodes.SERVICE_UNAVAILABLE);
+		}
+
+		try {
+			const recordings = await getCallRecordings(callLog.quoCallId);
+			return ServiceResponse.success("Recording retrieved.", { recordings });
+		} catch (err) {
+			const message = err instanceof QuoApiError ? err.message : "Failed to fetch call recording from Quo.";
+			logger.warn({ err, callLogId }, "Failed to fetch call recording");
+			return ServiceResponse.failure(message, null, err instanceof QuoApiError ? err.status : StatusCodes.BAD_GATEWAY);
+		}
+	}
+
+	/**
+	 * Fetch-on-demand call summary lookup — same pattern as getCallRecording.
+	 * Gracefully surfaces Quo's "absent" status (no error) when the workspace
+	 * isn't on a plan that generates summaries, or the call wasn't summarized,
+	 * rather than treating it as a failure.
+	 */
+	async getCallSummary(callLogId: string) {
+		const callLog = await prisma.smsCallLog.findUnique({ where: { id: callLogId } });
+		if (!callLog) return ServiceResponse.failure("Call not found.", null, StatusCodes.NOT_FOUND);
+
+		if (!isQuoConfigured) {
+			return ServiceResponse.failure(NOT_CONFIGURED_MESSAGE, null, StatusCodes.SERVICE_UNAVAILABLE);
+		}
+
+		try {
+			const summary = await quoGetCallSummary(callLog.quoCallId);
+			return ServiceResponse.success("Summary retrieved.", { summary });
+		} catch (err) {
+			const message = err instanceof QuoApiError ? err.message : "Failed to fetch call summary from Quo.";
+			logger.warn({ err, callLogId }, "Failed to fetch call summary");
+			return ServiceResponse.failure(message, null, err instanceof QuoApiError ? err.status : StatusCodes.BAD_GATEWAY);
 		}
 	}
 }

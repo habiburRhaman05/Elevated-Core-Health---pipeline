@@ -44,3 +44,7 @@ export const LinkPatientSchema = z.object({
 		patientId: z.string().min(1, "A patient must be selected"),
 	}),
 });
+
+export const CallLogIdParamSchema = z.object({
+	params: z.object({ callLogId: z.string().min(1) }),
+});

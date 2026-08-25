@@ -95,6 +95,8 @@ export const API_ENDPOINTS = {
     SEND: (conversationId: string) => `/messaging/conversations/${conversationId}/send`,
     READ: (conversationId: string) => `/messaging/conversations/${conversationId}/read`,
     LINK_PATIENT: (conversationId: string) => `/messaging/conversations/${conversationId}/link-patient`,
+    CALL_RECORDING: (callLogId: string) => `/messaging/calls/${callLogId}/recording`,
+    CALL_SUMMARY: (callLogId: string) => `/messaging/calls/${callLogId}/summary`,
   },
 }
 
@@ -141,6 +143,8 @@ export const QUERY_KEYS = {
     CONVERSATIONS: (filters?: Record<string, unknown>) => ["messaging", "conversations", filters] as const,
     CONVERSATION_BY_PATIENT: (patientId: string) => ["messaging", "conversations", "by-patient", patientId] as const,
     MESSAGES: (conversationId: string) => ["messaging", "conversations", conversationId, "messages"] as const,
+    CALL_RECORDING: (callLogId: string) => ["messaging", "calls", callLogId, "recording"] as const,
+    CALL_SUMMARY: (callLogId: string) => ["messaging", "calls", callLogId, "summary"] as const,
   },
   ADMIN: {
     USERS: ["admin", "users"] as const,

@@ -309,7 +309,11 @@ export async function listContacts(): Promise<QuoContact[]> {
 
 	do {
 		const url = new URL(`${QUO_API_BASE}/contacts`);
-		url.searchParams.set("maxResults", "100");
+		// Confirmed live: GET /v1/contacts caps maxResults at 50 (unlike
+		// /conversations, /messages, /calls, which all accept up to 100) —
+		// sending 100 here 400s every call, silently emptying the contact
+		// name lookup for every conversation.
+		url.searchParams.set("maxResults", "50");
 		if (pageToken) url.searchParams.set("pageToken", pageToken);
 
 		const res = await fetch(url.toString(), {
@@ -364,6 +368,53 @@ export async function findContactNameByPhoneNumber(e164Phone: string): Promise<s
 		logger.warn({ err, phone: e164Phone }, "Failed to look up Quo contact by phone number");
 	}
 	return null;
+}
+
+/**
+ * Same contact-name resolution as findContactNameByPhoneNumber(), but built
+ * once as a lookup map — for syncConversationsFromQuo() in
+ * messaging.service.ts, which may need to resolve a name for MANY
+ * conversations in a single pass. Calling findContactNameByPhoneNumber() in
+ * a loop there would re-fetch Quo's entire contact list once per
+ * conversation; this fetches it once for the whole sync instead.
+ */
+export async function buildContactNameLookup(): Promise<Map<string, string>> {
+	const lookup = new Map<string, string>();
+	try {
+		const contacts = await listContacts();
+		let withUsableName = 0;
+		for (const contact of contacts) {
+			const name = [contact.defaultFields?.firstName, contact.defaultFields?.lastName].filter(Boolean).join(" ").trim();
+			if (!name) continue;
+			let matchedAnyNumber = false;
+			for (const pn of contact.defaultFields?.phoneNumbers ?? []) {
+				const digits = (pn.value ?? "").replace(/\D/g, "");
+				if (digits.length >= 10) {
+					lookup.set(digits.slice(-10), name);
+					matchedAnyNumber = true;
+				}
+			}
+			if (matchedAnyNumber) withUsableName++;
+		}
+		// Deliberately logged at info level (not just on failure) — the only
+		// way to tell "Quo genuinely has no contacts for these numbers" apart
+		// from "the fetch/match is silently broken" is to see these counts
+		// against what the workspace's own Quo inbox shows.
+		logger.info(
+			{ totalContacts: contacts.length, withUsableName, lookupEntries: lookup.size },
+			"Built Quo contact name lookup",
+		);
+	} catch (err) {
+		logger.warn({ err }, "Failed to build Quo contact name lookup");
+	}
+	return lookup;
+}
+
+/** Looks a phone number up in a map built by buildContactNameLookup(). */
+export function lookupContactName(lookup: Map<string, string>, e164Phone: string): string | null {
+	const digits = e164Phone.replace(/\D/g, "");
+	if (digits.length < 10) return null;
+	return lookup.get(digits.slice(-10)) ?? null;
 }
 
 export interface QuoConversation {
@@ -534,6 +585,92 @@ export async function listCalls(params: {
 	} while (pageToken);
 
 	return allCalls;
+}
+
+/**
+ * GET /v1/call-recordings/{callId} — the recording(s) for one call. Quo's
+ * docs don't specify how long the returned `url` stays valid, so callers
+ * should treat it as short-lived and fetch fresh right before use rather than
+ * caching it — this is why the service/route below is fetch-on-demand
+ * (called when a VA actually clicks "Listen recording") instead of syncing
+ * recording URLs into the DB up front.
+ */
+export interface QuoCallRecording {
+	id: string;
+	url: string | null;
+	type: string | null;
+	duration: number | null;
+	startTime: string | null;
+	status: string | null;
+}
+
+export async function getCallRecordings(callId: string): Promise<QuoCallRecording[]> {
+	if (!env.QUO_API_KEY) {
+		throw new QuoApiError("Quo API key is not configured", 503);
+	}
+
+	const res = await fetch(`${QUO_API_BASE}/call-recordings/${encodeURIComponent(callId)}`, {
+		headers: { Authorization: env.QUO_API_KEY },
+	});
+	const body: unknown = await res.json().catch(() => null);
+
+	// Confirmed live: Quo returns HTTP 404 (not a 200 with an empty list) for
+	// a call that simply has no recording — a normal, expected outcome (call
+	// wasn't recorded, too short, recording still processing), not an error.
+	if (res.status === 404) return [];
+
+	if (!res.ok) {
+		const message = (body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+		throw new QuoApiError(message, res.status);
+	}
+
+	return ((body as { data?: QuoCallRecording[] })?.data ?? []) as QuoCallRecording[];
+}
+
+/**
+ * GET /v1/call-summaries/{callId} — AI call summary + suggested next steps.
+ * Requires Quo's Business plan or higher; on a lower plan (or a call that
+ * hasn't been summarized) this comes back with status "absent" rather than
+ * an error, which the caller renders as "not available" instead of failing.
+ */
+export interface QuoCallSummary {
+	callId: string;
+	summary: string[] | null;
+	nextSteps: string[] | null;
+	status: "absent" | "in-progress" | "completed" | "failed";
+}
+
+export async function getCallSummary(callId: string): Promise<QuoCallSummary> {
+	if (!env.QUO_API_KEY) {
+		throw new QuoApiError("Quo API key is not configured", 503);
+	}
+
+	const res = await fetch(`${QUO_API_BASE}/call-summaries/${encodeURIComponent(callId)}`, {
+		headers: { Authorization: env.QUO_API_KEY },
+	});
+	const body: unknown = await res.json().catch(() => null);
+
+	// Confirmed live: Quo returns HTTP 404 with a "Call Summary with ID ...
+	// not found" body for a call with no summary yet — a normal outcome (not
+	// on a plan that generates them, or not generated yet), not an error. The
+	// doc comment above describing a 200+"absent" body was wrong; this is the
+	// real shape.
+	if (res.status === 404) {
+		return { callId, summary: null, nextSteps: null, status: "absent" };
+	}
+
+	if (!res.ok) {
+		const message = (body as { message?: string } | null)?.message ?? `Quo API error (HTTP ${res.status})`;
+		throw new QuoApiError(message, res.status);
+	}
+
+	const data = (body as { data?: Partial<QuoCallSummary> })?.data ?? {};
+	return {
+		callId: data.callId ?? callId,
+		summary: data.summary ?? null,
+		nextSteps: data.nextSteps ?? null,
+		status: data.status ?? "absent",
+	};
 }
 
 // --------------------------------------------------------------------------

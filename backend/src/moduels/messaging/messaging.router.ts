@@ -1,13 +1,12 @@
 import { Router } from "express";
-
-import { requireAuth } from "@/middlewares/auth";
 import { authorizeChannel, getPusherKey } from "@/lib/pusher";
-import { handleServiceResponse } from "@/utils/httpHandlers";
+import { requireAuth } from "@/middlewares/auth";
+import { handleServiceResponse, validateRequest } from "@/utils/httpHandlers";
 import { logger } from "@/utils/logger";
 import { ServiceResponse } from "@/utils/serviceResponse";
-import { validateRequest } from "@/utils/httpHandlers";
 import { messagingController } from "./messaging.controller";
 import {
+	CallLogIdParamSchema,
 	ConversationIdParamSchema,
 	GetMessagesQuerySchema,
 	LinkPatientSchema,
@@ -76,4 +75,18 @@ messagingRouter.patch(
 	"/conversations/:id/link-patient",
 	validateRequest(LinkPatientSchema),
 	messagingController.linkPatient,
+);
+
+// Fetch-on-demand — only called when a VA actually opens the hover menu on a
+// call-log entry in a thread, never synced/cached ahead of time (see
+// getCallRecordings/getCallSummary doc comments in lib/quo.ts for why).
+messagingRouter.get(
+	"/calls/:callLogId/recording",
+	validateRequest(CallLogIdParamSchema),
+	messagingController.getCallRecording,
+);
+messagingRouter.get(
+	"/calls/:callLogId/summary",
+	validateRequest(CallLogIdParamSchema),
+	messagingController.getCallSummary,
 );
