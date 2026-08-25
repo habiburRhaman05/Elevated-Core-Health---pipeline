@@ -16,7 +16,7 @@ export function SplashLoader({
   if (!show) return null
 
   return (
-    <div className="fixed inset-0 z-100 flex items-center justify-center bg-gradient-to-br from-[#0F1115] via-[#1A1B1E] to-[#0F1115]">
+    <div className="fixed inset-0 z-100 flex items-center justify-center bg-[#F0F6F2]">
       {/* Animated background gradient */}
       <div className="absolute inset-0 opacity-30">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-[#036638]/20 rounded-full blur-3xl animate-pulse" />

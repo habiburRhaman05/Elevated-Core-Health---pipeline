@@ -11,6 +11,7 @@ import { MessagingService, type ListConversationsFilters } from "@/services/mess
 import { QUERY_KEYS } from "@/constants"
 import { getPusherClient, isPusherConfigured } from "@/lib/pusher-client"
 import { toast } from "sonner"
+import type { SmsMessage, SmsMessagesResponse } from "@/types"
 
 /** Lets the UI show the "SMS isn't configured yet" fallback proactively. */
 export function useMessagingStatus() {
@@ -54,13 +55,23 @@ export function useConversations(filters?: ListConversationsFilters) {
   })
 }
 
-/** Patient modal's Messages tab — resolves (and lazily creates) the
- * conversation row for this patient's phone number. */
+/**
+ * Patient modal's Messages tab — resolves (and lazily creates) the
+ * conversation row for this patient's phone number. Polled (not just
+ * fetched once) so a modal left open notices a conversation that gets
+ * linked to this patient — or its unreadCount/lastMessageAt changing —
+ * from somewhere else (the central inbox, another VA's session, a fresh
+ * Quo webhook) without needing to be closed and reopened. Mirrors
+ * useConversationMessages' own 10s fallback-poll pattern below; Pusher's
+ * "conversation-updated" push (when configured) still invalidates this
+ * instantly via useRealtimeMessaging - this interval is only the backstop.
+ */
 export function useConversationByPatient(patientId: string | undefined) {
   return useQuery({
     queryKey: QUERY_KEYS.MESSAGING.CONVERSATION_BY_PATIENT(patientId ?? ""),
     queryFn: () => MessagingService.getConversationByPatient(patientId as string),
     enabled: !!patientId,
+    refetchInterval: 15_000,
   })
 }
 
@@ -78,20 +89,69 @@ export function useConversationMessages(conversationId: string | null | undefine
   })
 }
 
+type SendMessageVars = { conversationId: string; content: string; phoneNumberId?: string }
+
+/**
+ * Optimistic send: the bubble appears in the thread instantly (status
+ * "sending", faded, with a spinner) instead of waiting on the round-trip to
+ * Quo before anything shows up. Replaced in place with the real message on
+ * success; removed on failure (message-thread.tsx's caller restores the
+ * composer draft so the user isn't stuck retyping it).
+ */
 export function useSendMessage() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({
-      conversationId,
-      content,
-      phoneNumberId,
-    }: { conversationId: string; content: string; phoneNumberId?: string }) =>
+    mutationFn: ({ conversationId, content, phoneNumberId }: SendMessageVars) =>
       MessagingService.sendMessage(conversationId, content, phoneNumberId),
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: QUERY_KEYS.MESSAGING.MESSAGES(vars.conversationId) })
+    onMutate: async (vars) => {
+      const key = QUERY_KEYS.MESSAGING.MESSAGES(vars.conversationId)
+      await qc.cancelQueries({ queryKey: key })
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const optimisticMessage: SmsMessage = {
+        id: tempId,
+        conversationId: vars.conversationId,
+        direction: "outbound",
+        body: vars.content,
+        status: "sending",
+        quoMessageId: null,
+        sentById: null,
+        sentByUser: null,
+        errorMessage: null,
+        media: null,
+        createdAt: new Date().toISOString(),
+      }
+      qc.setQueryData<SmsMessagesResponse>(key, (old) =>
+        old ? { ...old, messages: [...old.messages, optimisticMessage], total: old.total + 1 } : old,
+      )
+      return { key, tempId }
+    },
+    onSuccess: (data, vars, context) => {
+      if (context) {
+        qc.setQueryData<SmsMessagesResponse>(context.key, (old) =>
+          old
+            ? { ...old, messages: old.messages.map((m) => (m.id === context.tempId ? data.message : m)) }
+            : old,
+        )
+      }
       qc.invalidateQueries({ queryKey: QUERY_KEYS.MESSAGING.ALL })
     },
-    onError: (err: any) => {
+    onError: (err: any, _vars, context) => {
+      // The optimistic bubble is dropped rather than left showing "failed"
+      // forever - the composer gets the draft back instead (see
+      // message-thread.tsx's handleSend), and the real failed row Quo/our
+      // backend recorded still surfaces via the next poll for the audit
+      // trail, without doubling up on the same failure in two places at once.
+      if (context) {
+        qc.setQueryData<SmsMessagesResponse>(context.key, (old) =>
+          old
+            ? {
+                ...old,
+                messages: old.messages.filter((m) => m.id !== context.tempId),
+                total: Math.max(0, old.total - 1),
+              }
+            : old,
+        )
+      }
       // The backend returns this exact message (HTTP 503) when
       // QUO_API_KEY is unset or no US-capable number exists — surfaced
       // verbatim so a VA sees precisely why the send failed (never a silent

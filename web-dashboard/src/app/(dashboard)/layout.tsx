@@ -50,7 +50,7 @@ export default function DashboardLayout({
         </div>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar p-3 sm:p-4 md:p-6 lg:p-6 pb-24 lg:pb-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar p-2">
           <div className="relative z-10 w-full no-scrollbar">
             <DashboardWatermark
               position="center"

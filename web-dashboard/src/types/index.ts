@@ -191,7 +191,9 @@ export interface ImportBatch {
 }
 
 export type SmsMessageDirection = "inbound" | "outbound"
-export type SmsMessageStatus = "sent" | "delivered" | "failed" | "received"
+/** "sending" is a client-only pseudo-status for an optimistic message that
+ *  hasn't been confirmed by the server yet — never returned by the API. */
+export type SmsMessageStatus = "sent" | "delivered" | "failed" | "received" | "sending"
 
 /** An inbound attachment. Quo has no send-MMS endpoint, so this only ever
  *  appears on inbound messages, never something we attach on an outbound send. */

@@ -394,6 +394,24 @@ class MessagingService {
 		});
 		if (!patient) return ServiceResponse.failure("Patient not found.", null, StatusCodes.NOT_FOUND);
 
+		// Prefer a conversation ALREADY linked to this patient via patientId -
+		// e.g. from the central inbox's "Link to patient" action on an
+		// unmatched thread, which can point at a phone number different from
+		// patient.phone (the patient texts from a number that isn't the one on
+		// file, or the on-file number was a placeholder/typo). Falling straight
+		// through to a strict phone-number match below would silently ignore
+		// that link and show a stale/empty shell conversation instead of the
+		// real, active one - most recently active wins if more than one is
+		// somehow linked to the same patient.
+		const linkedConversation = await prisma.smsConversation.findFirst({
+			where: { patientId },
+			orderBy: { lastMessageAt: "desc" },
+			include: { patient: { select: PATIENT_SELECT } },
+		});
+		if (linkedConversation) {
+			return ServiceResponse.success("Conversation ready.", { conversation: conversationDto(linkedConversation) });
+		}
+
 		const normalizedPhone = normalizeE164(patient.phone);
 		if (!normalizedPhone) {
 			return ServiceResponse.success("This patient has no phone number on file.", { conversation: null });

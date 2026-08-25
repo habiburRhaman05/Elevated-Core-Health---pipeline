@@ -243,11 +243,32 @@ export function MessageThread({
 
   const handleSend = () => {
     const content = draft.trim()
-    if (!content || !conversationId || sendMessage.isPending) return
-    const body = replyingTo ? `> ${quoteSnippet(replyingTo.body)}\n${content}` : content
+    // No longer gated on sendMessage.isPending - each send gets its own
+    // optimistic bubble with its own temp id (see useSendMessage), so firing
+    // off several messages back-to-back before the first resolves is safe
+    // and matches how a real chat app feels, instead of blocking input
+    // until a slow network round-trip finishes.
+    if (!content || !conversationId) return
+    const wasReplyingTo = replyingTo
+    const body = wasReplyingTo ? `> ${quoteSnippet(wasReplyingTo.body)}\n${content}` : content
+    // Cleared immediately (not on success) - the hook shows the message
+    // in-thread right away via an optimistic bubble, so the composer being
+    // empty and the bubble appearing happen in the same instant.
     setDraft("")
     setReplyingTo(null)
-    sendMessage.mutate({ conversationId, content: body, phoneNumberId })
+    sendMessage.mutate(
+      { conversationId, content: body, phoneNumberId },
+      {
+        // A failed send gives the draft back instead of leaving the user to
+        // retype it - the failed attempt still lands in the thread/audit
+        // trail server-side, but from the composer's point of view this is
+        // just "try again."
+        onError: () => {
+          setDraft(content)
+          setReplyingTo(wasReplyingTo)
+        },
+      },
+    )
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -318,7 +339,7 @@ export function MessageThread({
       )}
 
       <div
-        className={cn("flex-1 min-h-0 overflow-y-auto scrollbar-brand space-y-3", compact ? "p-3" : "p-4")}
+        className={cn("flex-1 min-h-0 overflow-y-auto scrollbar-brand space-y-1.5", compact ? "p-3" : "p-4")}
         style={useFixedComposer ? { paddingBottom: composerHeight } : undefined}
       >
         {isLoadingMessages ? (
@@ -338,7 +359,7 @@ export function MessageThread({
               <div
                 key={`${item.kind}-${item.data.id}`}
                 ref={item.kind === "message" ? (el) => setMessageRowRef(item.data.id, el) : undefined}
-                className="space-y-3"
+                className="space-y-1.5"
               >
                 {showSeparator && (
                   <div className="flex items-center justify-center pt-1">
@@ -380,24 +401,35 @@ export function MessageThread({
           useFixedComposer && "fixed inset-x-0 bottom-24 z-10",
         )}
       >
-        {replyingTo && (
-          <div className="flex items-start gap-2 mb-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-100">
-            <Reply className="w-3.5 h-3.5 text-[#6B7280] shrink-0 mt-0.5" />
-            <p className="flex-1 min-w-0 text-xs text-[#6B7280] truncate">
-              Replying to: <span className="text-[#374151]">{quoteSnippet(replyingTo.body)}</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => setReplyingTo(null)}
-              aria-label="Cancel reply"
-              className="p-0.5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors shrink-0"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+        {/* Single bordered card holding the reply banner, textarea, and icon
+            row together - the brand focus ring lives on this outer card
+            (via focus-within) rather than the textarea alone, so the whole
+            composer reads as one cohesive control instead of a bare input
+            with loose buttons floating beside it. */}
+        <div
+          className={cn(
+            "rounded-2xl border border-gray-200 bg-white transition-colors",
+            "focus-within:border-[#65BD6C] focus-within:ring-2 focus-within:ring-[#65BD6C]/25",
+            !canSend && "bg-gray-50",
+          )}
+        >
+          {replyingTo && (
+            <div className="flex items-start gap-2 mx-2 mt-2 px-2.5 py-1.5 rounded-lg bg-[#EBF7EC] border border-[#65BD6C]/30">
+              <Reply className="w-3.5 h-3.5 text-[#036638] shrink-0 mt-0.5" />
+              <p className="flex-1 min-w-0 text-xs text-[#374151] truncate">
+                Replying to: <span className="font-medium text-[#1A1B1E]">{quoteSnippet(replyingTo.body)}</span>
+              </p>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                aria-label="Cancel reply"
+                className="p-0.5 rounded text-[#036638]/60 hover:text-[#036638] hover:bg-white/60 transition-colors shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
-        <div className="flex items-end gap-2">
           <Textarea
             ref={textareaRef}
             value={draft}
@@ -412,27 +444,30 @@ export function MessageThread({
             }
             disabled={!canSend}
             rows={1}
-            className="min-h-[38px] max-h-24 resize-none text-sm py-2"
+            className="min-h-[40px] max-h-24 resize-none text-sm px-3.5 pt-2.5 pb-1 border-0 shadow-none bg-transparent focus:ring-0 focus:border-0 disabled:bg-transparent"
           />
-          <Button
-            type="button"
-            size="sm"
-            onClick={handleSend}
-            disabled={!canSend || !draft.trim() || sendMessage.isPending}
-            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shrink-0 h-[38px] w-[38px] p-0"
-            title="Send"
-          >
-            {sendMessage.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </Button>
-        </div>
 
-        <div className="flex items-center gap-0.5 mt-1">
-          <EmojiPicker onSelect={insertEmoji} disabled={!canSend} />
-          {/* Attachments are explicitly out of scope - Quo's API has no MMS
-              support - so this opens an explained, visually-disabled popup
-              instead of a real file picker. Not gated on canSend: it's
-              informational and safe to open even when sending is disabled. */}
-          <AttachmentPicker />
+          <div className="flex items-center justify-between gap-1 px-1.5 pb-1.5">
+            <div className="flex items-center gap-0.5">
+              <EmojiPicker onSelect={insertEmoji} disabled={!canSend} />
+              {/* Attachments are explicitly out of scope - Quo's API has no
+                  MMS support - so this opens an explained, visually-disabled
+                  popup instead of a real file picker. Not gated on canSend:
+                  it's informational and safe to open even when sending is
+                  disabled. */}
+              <AttachmentPicker />
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSend}
+              disabled={!canSend || !draft.trim()}
+              className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shrink-0 h-8 w-8 p-0 rounded-full"
+              title="Send"
+            >
+              <Send className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -486,13 +521,24 @@ function MessageBubble({
   isActiveMatch?: boolean
 }) {
   const isOutbound = message.direction === "outbound"
+  const isSending = message.status === "sending"
+  // An outbound message with no local sender attribution AND that isn't our
+  // own optimistic in-flight bubble was sent directly from the Quo
+  // dashboard by clinic staff, outside this app - the brand logo stands in
+  // for a sender since there's no local person to attribute it to.
+  const showLogoAvatar = isOutbound && !message.sentById && !isSending
   const avatarName = isOutbound ? message.sentByUser?.name || "You" : patientLabel
   const media = message.media ?? []
   const hasBody = message.body.trim().length > 0
 
   return (
     <div className={cn("group flex items-end gap-2", isOutbound ? "flex-row-reverse" : "flex-row")}>
-      <Avatar name={avatarName} colorKey={isOutbound ? (message.sentById ?? "you") : patientLabel} size="sm" />
+      <Avatar
+        name={avatarName}
+        colorKey={isOutbound ? (message.sentById ?? "you") : patientLabel}
+        size="sm"
+        useLogo={showLogoAvatar}
+      />
 
       <div className={cn("flex flex-col max-w-[75%]", isOutbound ? "items-end" : "items-start")}>
         <div className={cn("flex items-end gap-1", isOutbound ? "flex-row-reverse" : "flex-row")}>
@@ -501,13 +547,17 @@ function MessageBubble({
             {hasBody && (
               <div
                 className={cn(
-                  "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words transition-shadow",
+                  "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words transition-all",
                   isOutbound
                     ? message.status === "failed"
                       ? "bg-[#CC3333]/10 text-[#CC3333] border border-[#CC3333]/30 rounded-br-sm"
                       : "bg-[#036638] text-white rounded-br-sm"
                     : "bg-[#F3F4F6] text-[#1A1B1E] rounded-bl-sm",
                   isActiveMatch && "ring-2 ring-amber-400 ring-offset-1",
+                  // Subtle "in flight" look while unconfirmed - same idea as
+                  // WhatsApp/iMessage's faded-until-sent bubble, so a slow
+                  // network never reads as "nothing happened."
+                  isSending && "opacity-60",
                 )}
               >
                 {highlightText(message.body, highlightQuery)}
@@ -530,7 +580,14 @@ function MessageBubble({
         >
           {/* Attribution - who sent it, not just "sent" (multiple VAs share this inbox). */}
           {isOutbound && message.sentByUser?.name && <span className="font-semibold">{message.sentByUser.name}</span>}
-          <span>{formatMessageTimestamp(message.createdAt)}</span>
+          {isSending ? (
+            <span className="flex items-center gap-1 text-[#9CA3AF]">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              Sending…
+            </span>
+          ) : (
+            <span>{formatMessageTimestamp(message.createdAt)}</span>
+          )}
           {message.status === "failed" && (
             <span className="text-[#CC3333] font-semibold">
               Failed{message.errorMessage ? `: ${message.errorMessage}` : ""}
@@ -783,13 +840,7 @@ function CallModalEmptyRow({ message }: { message: string }) {
   return <p className="py-6 text-center text-sm text-[#9CA3AF]">{message}</p>
 }
 
-/**
- * Recording/summary viewer, opened from CallHoverActions. Fetches exactly
- * once per open (not on every re-render) — the recording URL Quo returns is
- * undocumented on lifetime, so it's fetched fresh right here rather than
- * cached anywhere, and the same on-open-only fetch is used for the summary
- * for consistency.
- */
+
 function CallActionModal({
   call,
   mode,
