@@ -9,20 +9,23 @@ const ACCEPT =
   "image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.txt,.csv"
 
 interface AttachmentPickerProps {
+  /** No conversation selected yet — the whole composer is disabled, this
+   *  button included. Genuinely inert (matches the textarea/send button). */
   disabled?: boolean
+  /** Server has no Cloudinary credentials set — the button stays clickable
+   *  (so it never LOOKS broken) but the popover explains why nothing here
+   *  will actually upload yet, same convention as the SMS module's
+   *  permanently-explained dummy AttachmentPicker. */
+  notConfigured?: boolean
   /** Fired once per user action with every file they picked/dropped in that action. */
   onFilesSelected: (files: File[]) => void
 }
 
 /**
  * Real attach button + popover — click "Choose files" or drag files straight
- * onto the drop zone. Unlike the SMS module's AttachmentPicker (a permanent
- * explained dummy, since Quo's API has no MMS support), this one actually
- * uploads: picking files here hands them to the composer, which starts
- * uploading immediately so the progress bar is already moving by the time
- * the popover closes.
+ * onto the drop zone.
  */
-export function InternalAttachmentPicker({ disabled, onFilesSelected }: AttachmentPickerProps) {
+export function InternalAttachmentPicker({ disabled, notConfigured, onFilesSelected }: AttachmentPickerProps) {
   const [open, setOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -36,6 +39,8 @@ export function InternalAttachmentPicker({ disabled, onFilesSelected }: Attachme
 
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+    setDragOver(false)
+    if (notConfigured) return
     closeAnd(Array.from(e.dataTransfer.files ?? []))
   }
 
@@ -77,24 +82,31 @@ export function InternalAttachmentPicker({ disabled, onFilesSelected }: Attachme
               </div>
 
               <div className="p-3">
-                <div
-                  onDragOver={(e) => {
-                    e.preventDefault()
-                    setDragOver(true)
-                  }}
-                  onDragLeave={() => setDragOver(false)}
-                  onDrop={handleDrop}
-                  onClick={() => inputRef.current?.click()}
-                  className={cn(
-                    "flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed text-center cursor-pointer transition-colors",
-                    dragOver ? "border-[#036638] bg-[#EBF7EC]" : "border-gray-200 bg-gray-50 hover:bg-gray-100",
-                  )}
-                >
-                  <UploadCloud className={cn("w-6 h-6", dragOver ? "text-[#036638]" : "text-[#9CA3AF]")} strokeWidth={1.5} />
-                  <p className="text-[11px] font-semibold text-[#6B7280]">
-                    Drop files here or <span className="text-[#036638]">browse</span>
-                  </p>
-                </div>
+                {notConfigured ? (
+                  <div className="flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed border-gray-200 bg-gray-50 text-center">
+                    <UploadCloud className="w-6 h-6 text-[#D1D5DB]" strokeWidth={1.5} />
+                    <p className="text-[11px] font-semibold text-[#9CA3AF]">Not set up yet</p>
+                  </div>
+                ) : (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setDragOver(true)
+                    }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={handleDrop}
+                    onClick={() => inputRef.current?.click()}
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed text-center cursor-pointer transition-colors",
+                      dragOver ? "border-[#036638] bg-[#EBF7EC]" : "border-gray-200 bg-gray-50 hover:bg-gray-100",
+                    )}
+                  >
+                    <UploadCloud className={cn("w-6 h-6", dragOver ? "text-[#036638]" : "text-[#9CA3AF]")} strokeWidth={1.5} />
+                    <p className="text-[11px] font-semibold text-[#6B7280]">
+                      Drop files here or <span className="text-[#036638]">browse</span>
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-center gap-3 mt-2.5 text-[#9CA3AF]">
                   <span title="Images">
@@ -110,17 +122,23 @@ export function InternalAttachmentPicker({ disabled, onFilesSelected }: Attachme
                     <Paperclip className="w-3.5 h-3.5" />
                   </span>
                 </div>
-                <p className="text-[10px] text-[#9CA3AF] text-center mt-1.5">Images, video, audio & docs — up to 25MB each</p>
+                <p className="text-[10px] text-[#9CA3AF] text-center mt-1.5">
+                  {notConfigured
+                    ? "File attachments aren't configured on this server yet."
+                    : "Images, video, audio & docs — up to 25MB each"}
+                </p>
               </div>
 
-              <input
-                ref={inputRef}
-                type="file"
-                multiple
-                accept={ACCEPT}
-                className="hidden"
-                onChange={(e) => closeAnd(Array.from(e.target.files ?? []))}
-              />
+              {!notConfigured && (
+                <input
+                  ref={inputRef}
+                  type="file"
+                  multiple
+                  accept={ACCEPT}
+                  className="hidden"
+                  onChange={(e) => closeAnd(Array.from(e.target.files ?? []))}
+                />
+              )}
             </motion.div>
           </>
         )}

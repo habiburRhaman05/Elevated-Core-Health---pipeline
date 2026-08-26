@@ -17,13 +17,19 @@ import { logger } from "@/utils/logger";
  * instance B, and A's broadcast will never reach B's client. Fixing that
  * properly needs an external pub/sub (e.g. Redis) shared by all instances -
  * deliberately NOT added here, since it's new infrastructure to provision and
- * pay for.
+ * pay for. Same trade-off Link Internal Board makes below: this is the
+ * primary transport (no third-party account/credentials needed - it just
+ * runs on this same server), with a REST polling fallback on the frontend
+ * catching anything a missed/misrouted push would drop. Pusher (lib/pusher.ts)
+ * is kept working and available as a drop-in swap if this ever needs to scale
+ * across multiple instances/regions - not wired into Internal Board right now.
  *
- * Instead the frontend keeps a slower polling fallback alongside this socket:
- * when the push lands on the right instance you get an instant update, and
- * when it doesn't the poll still catches it a few seconds later. Never a
+ * The frontend keeps a slower polling fallback alongside this socket either
+ * way: when the push lands on the right instance you get an instant update,
+ * and when it doesn't the poll still catches it a few seconds later. Never a
  * missed message either way - just occasionally a slower one. See
- * useMessagingRealtime() on the frontend.
+ * useMessagingRealtime() (SMS) / useRealtimeInternalBoard() (Link Internal
+ * Board) on the frontend.
  */
 
 /** Everything we push is a small "something changed, refetch it" nudge, never
@@ -31,7 +37,32 @@ import { logger } from "@/utils/logger";
 export type RealtimeEvent =
 	| { type: "sms.received"; conversationId: string; messageId: string }
 	| { type: "sms.sent"; conversationId: string; messageId: string }
-	| { type: "conversation.updated"; conversationId: string };
+	| { type: "conversation.updated"; conversationId: string }
+	| InternalRealtimeEvent;
+
+/**
+ * Link Internal Board's own event set - same socket/connection as the SMS
+ * events above (one WS per browser tab, not one per feature), namespaced by
+ * `type` prefix so a client can tell at a glance which feature an event is
+ * for. `new-message`'s payload mirrors what lib/pusher.ts's
+ * InternalNewMessagePayload carried, so the frontend's cache-patch logic
+ * doesn't care which transport delivered it.
+ */
+export type InternalRealtimeEvent =
+	| {
+			type: "internal.new-message";
+			conversationId: string;
+			messageId: string;
+			senderId: string;
+			preview: string;
+			createdAt: string;
+	  }
+	| { type: "internal.conversation-updated"; conversationId: string }
+	| { type: "internal.typing"; fromUserId: string; fromName: string }
+	/** Full online-userId snapshot, not an incremental add/remove - cheap and
+	 *  always-correct at staff-roster scale, and avoids a client's presence
+	 *  state ever drifting from a missed increment/decrement. */
+	| { type: "internal.presence"; onlineUserIds: string[] };
 
 interface Client {
 	socket: WebSocket;
@@ -92,25 +123,30 @@ export function attachRealtime(server: HttpServer): WebSocketServer {
 			const client: Client = { socket: ws, userId, isAlive: true };
 			clients.add(client);
 			logger.info({ userId, clients: clients.size }, "Realtime client connected");
+			broadcastPresence();
 
 			ws.on("pong", () => {
 				client.isAlive = true;
 			});
 			ws.on("close", () => {
 				clients.delete(client);
+				broadcastPresence();
 			});
 			ws.on("error", (err) => {
 				logger.warn({ err, userId }, "Realtime socket error");
 				clients.delete(client);
+				broadcastPresence();
 			});
 		});
 	});
 
 	const heartbeat = setInterval(() => {
+		let changed = false;
 		for (const client of clients) {
 			if (!client.isAlive) {
 				client.socket.terminate();
 				clients.delete(client);
+				changed = true;
 				continue;
 			}
 			client.isAlive = false;
@@ -118,8 +154,10 @@ export function attachRealtime(server: HttpServer): WebSocketServer {
 				client.socket.ping();
 			} catch {
 				clients.delete(client);
+				changed = true;
 			}
 		}
+		if (changed) broadcastPresence();
 	}, HEARTBEAT_MS);
 	// Don't hold the process open just for the heartbeat.
 	heartbeat.unref?.();
@@ -150,6 +188,48 @@ export function broadcast(event: RealtimeEvent): void {
 			clients.delete(client);
 		}
 	}
+}
+
+/**
+ * Fan out to every socket belonging to one specific user (they may have
+ * several tabs/devices open - all of them get it). Used for Link Internal
+ * Board's private per-user events (new-message, typing) instead of the
+ * broadcast-to-everyone above, which is only right for the SMS module's
+ * single shared inbox.
+ */
+export function broadcastToUser(userId: string, event: InternalRealtimeEvent): void {
+	if (clients.size === 0) return;
+	const payload = JSON.stringify(event);
+
+	for (const client of clients) {
+		if (client.userId !== userId) continue;
+		if (client.socket.readyState !== WebSocket.OPEN) {
+			clients.delete(client);
+			continue;
+		}
+		try {
+			client.socket.send(payload);
+		} catch (err) {
+			logger.warn({ err, userId }, "Failed to push realtime event to a user");
+			clients.delete(client);
+		}
+	}
+}
+
+/** Same as broadcastToUser, for several recipients at once (a DM's two participants). */
+export function broadcastToUsers(userIds: string[], event: InternalRealtimeEvent): void {
+	for (const userId of userIds) broadcastToUser(userId, event);
+}
+
+/** Every distinct userId with at least one open connection right now. */
+export function getOnlineUserIds(): string[] {
+	return Array.from(new Set(Array.from(clients).map((c) => c.userId)));
+}
+
+/** Pushes the current online-userId snapshot to every connected client -
+ *  called whenever the connected set changes (connect/disconnect/reap). */
+function broadcastPresence(): void {
+	broadcast({ type: "internal.presence", onlineUserIds: getOnlineUserIds() });
 }
 
 /** Connected-client count on this instance - used by the health endpoint. */

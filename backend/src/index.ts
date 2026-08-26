@@ -1,9 +1,13 @@
 import { createServer } from "node:http";
 import { connectToDatabase } from "@/config/db";
+import { attachRealtime } from "@/lib/realtime";
 import { app, logger } from "@/server";
 import { env } from "@/utils/envConfig";
 
 const httpServer = createServer(app);
+// Link Internal Board's typing/presence/new-message push (and the SMS
+// module's own realtime nudges) both ride this one WebSocket server.
+attachRealtime(httpServer);
 
 const server = httpServer.listen(env.PORT, async () => {
 	await connectToDatabase();

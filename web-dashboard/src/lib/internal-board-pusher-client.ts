@@ -37,3 +37,8 @@ export function getInternalBoardPusherClient(): Pusher | null {
 }
 
 export const isInternalBoardPusherConfigured = Boolean(env.NEXT_PUBLIC_PUSHER_KEY && env.NEXT_PUBLIC_PUSHER_CLUSTER)
+
+/** Must match backend's INTERNAL_BOARD_PRESENCE_CHANNEL (lib/pusher.ts)
+ *  exactly — the one shared channel every staff member subscribes to for
+ *  online/offline dots. */
+export const INTERNAL_BOARD_PRESENCE_CHANNEL = "presence-internal-board"

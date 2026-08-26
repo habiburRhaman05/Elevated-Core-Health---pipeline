@@ -524,6 +524,16 @@ model InternalConversation {
   type               InternalConversationType @default(dm)
   name               String?
   avatarUrl          String?                  @map("avatar_url")
+  /**
+   * Phase 2 — the two participant user IDs, sorted and joined ("id1:id2"),
+   * set only for `type: dm`. A DB-level unique constraint (not just an
+   * application-level findFirst-then-create check) so two concurrent
+   * "send my first message to this person" requests can never race into two
+   * separate DM threads: the loser of the race hits a unique-violation and
+   * falls back to the winner's row instead. Null for groups (Phase 3+),
+   * which have no single fixed pair.
+   */
+  dmPairKey          String?                  @unique @map("dm_pair_key")
   createdById        String?                  @map("created_by")
   lastMessageAt      DateTime?                @map("last_message_at")
   lastMessagePreview String?                  @map("last_message_preview")
@@ -567,6 +577,12 @@ model InternalMessage {
   conversationId String    @map("conversation_id")
   senderId       String    @map("sender_id")
   body           String?
+  /**
+   * Phase 2 — reply-to. Nullable self-relation; SetNull on delete so
+   * replying to a message that later gets deleted doesn't cascade-delete
+   * the reply itself, it just orphans the quote reference.
+   */
+  replyToId      String?   @map("reply_to_id")
   editedAt       DateTime? @map("edited_at")
   deletedAt      DateTime? @map("deleted_at")
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -574,9 +590,12 @@ model InternalMessage {
   conversation InternalConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User                 @relation(fields: [senderId], references: [id])
   attachments  InternalAttachment[]
+  replyTo      InternalMessage?     @relation("InternalMessageReplyTo", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      InternalMessage[]    @relation("InternalMessageReplyTo")
 
   @@index([conversationId, createdAt])
   @@index([senderId])
+  @@index([replyToId])
   @@map("internal_messages")
 }
 

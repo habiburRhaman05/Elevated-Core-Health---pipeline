@@ -2,6 +2,13 @@
 
 import { avatarColor, cn, getInitials } from "@/lib/utils"
 
+const DOT_SIZE: Record<"xs" | "sm" | "md" | "lg", string> = {
+  xs: "w-1.5 h-1.5 border",
+  sm: "w-2 h-2 border-2",
+  md: "w-2.5 h-2.5 border-2",
+  lg: "w-3.5 h-3.5 border-2",
+}
+
 /**
  * Initials avatar for Link Internal Board — same visual language as the
  * messaging module's Avatar (avatarColor/getInitials are generic lib/utils
@@ -13,11 +20,14 @@ export function InternalAvatar({
   colorKey,
   avatarUrl,
   size = "md",
+  /** undefined = presence unknown/not tracked here (don't render a dot at all). */
+  online,
 }: {
   name: string
   colorKey: string
   avatarUrl?: string | null
   size?: "xs" | "sm" | "md" | "lg"
+  online?: boolean
 }) {
   const color = avatarColor(colorKey)
   const sizeClasses = cn(
@@ -28,12 +38,24 @@ export function InternalAvatar({
     size === "lg" && "w-16 h-16 text-lg",
   )
 
-  if (avatarUrl) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- remote per-user avatar, not worth next/image config here
-      <img src={avatarUrl} alt={name} className={cn(sizeClasses, "object-cover")} />
-    )
-  }
-
-  return <div className={cn(sizeClasses, color.bg, color.text)}>{getInitials(name)}</div>
+  return (
+    <div className="relative shrink-0">
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- remote per-user avatar, not worth next/image config here
+        <img src={avatarUrl} alt={name} className={cn(sizeClasses, "object-cover")} />
+      ) : (
+        <div className={cn(sizeClasses, color.bg, color.text)}>{getInitials(name)}</div>
+      )}
+      {online !== undefined && (
+        <span
+          title={online ? "Online" : "Offline"}
+          className={cn(
+            "absolute bottom-0 right-0 rounded-full border-white",
+            DOT_SIZE[size],
+            online ? "bg-emerald-400" : "bg-gray-300",
+          )}
+        />
+      )}
+    </div>
+  )
 }

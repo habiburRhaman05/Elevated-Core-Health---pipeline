@@ -1,7 +1,6 @@
-import { StatusCodes } from "http-status-codes";
-
+import { Prisma } from "@/generated/prisma/client";
 import { isCloudinaryConfigured, uploadInternalMessageAttachment } from "@/lib/cloudinary";
-import { getPusherKey, notifyInternalConversationUpdated, notifyInternalNewMessage } from "@/lib/pusher";
+import { broadcastToUser, broadcastToUsers } from "@/lib/realtime";
 import type { AuthenticatedUser } from "@/lib/types";
 import { AppError } from "@/utils/appError";
 import { prisma } from "@/utils/prisma";
@@ -22,22 +21,26 @@ const ATTACHMENT_SELECT = {
 	durationSeconds: true,
 } as const;
 
+/** Trimmed-down quote for a reply preview — just enough to render "replying
+ *  to: <snippet/thumbnail> — <sender>" without pulling the whole original
+ *  message (which the client already has in its own cache if it's visible). */
+const REPLY_TO_SELECT = {
+	id: true,
+	body: true,
+	deletedAt: true,
+	sender: { select: { id: true, name: true } },
+	attachments: { select: { id: true, type: true, url: true, fileName: true }, take: 1 },
+} as const;
+
 const MESSAGE_INCLUDE = {
 	sender: { select: SENDER_SELECT },
 	attachments: { select: ATTACHMENT_SELECT },
+	replyTo: { select: REPLY_TO_SELECT },
 } as const;
 
-function messageDto(message: {
-	id: string;
-	conversationId: string;
-	senderId: string;
-	sender: { id: string; name: string; role: string; avatar: string | null };
-	body: string | null;
-	editedAt: Date | null;
-	deletedAt: Date | null;
-	createdAt: Date;
-	attachments: Array<Record<string, unknown>>;
-}) {
+type MessageWithRelations = Prisma.InternalMessageGetPayload<{ include: typeof MESSAGE_INCLUDE }>;
+
+function messageDto(message: MessageWithRelations) {
 	return {
 		id: message.id,
 		conversationId: message.conversationId,
@@ -45,6 +48,16 @@ function messageDto(message: {
 		sender: message.sender,
 		body: message.body,
 		attachments: message.attachments,
+		replyTo: message.replyTo
+			? {
+					id: message.replyTo.id,
+					body: message.replyTo.body,
+					senderId: message.replyTo.sender.id,
+					senderName: message.replyTo.sender.name,
+					attachmentPreview: message.replyTo.attachments[0] ?? null,
+					deleted: message.replyTo.deletedAt !== null,
+				}
+			: null,
 		editedAt: message.editedAt,
 		deletedAt: message.deletedAt,
 		createdAt: message.createdAt,
@@ -66,116 +79,165 @@ async function requireParticipant(conversationId: string, userId: string) {
 	return { conversation, me };
 }
 
+/** True when `err` is Postgres' unique-violation for the given constraint —
+ *  used to detect (and recover from) the race described on dmPairKey. */
+function isUniqueViolationOn(err: unknown, target: string): boolean {
+	return (
+		err instanceof Prisma.PrismaClientKnownRequestError &&
+		err.code === "P2002" &&
+		(Array.isArray(err.meta?.target) ? err.meta.target.includes(target) : err.meta?.target === target)
+	);
+}
+
+/** A message needs to land somewhere — either an existing conversation the
+ *  caller already belongs to, or a fresh/lazy DM with a specific teammate
+ *  (created on demand, see resolveConversation). Exactly one is ever set. */
+export type MessageTarget = { conversationId: string } | { recipientUserId: string };
+
+/**
+ * Resolves `target` to a real conversation + its participant ids.
+ *
+ * The `recipientUserId` branch is the Phase 2 "auto-synced sidebar" path: no
+ * conversation exists yet (the sidebar never creates one just to display a
+ * teammate), so the very first send has to find-or-create it. Race-safe via
+ * `dmPairKey`'s unique constraint — if two concurrent first-messages both
+ * try to create the same pair, the loser's insert fails with P2002 and it
+ * simply re-reads the winner's row instead of erroring or duplicating.
+ */
+async function resolveConversation(
+	user: AuthenticatedUser,
+	target: MessageTarget,
+): Promise<{ conversationId: string; participantIds: string[]; isNewConversation: boolean }> {
+	if ("conversationId" in target) {
+		const { conversation } = await requireParticipant(target.conversationId, user.id);
+		return {
+			conversationId: conversation.id,
+			participantIds: conversation.participants.map((p) => p.userId),
+			isNewConversation: false,
+		};
+	}
+
+	const recipientId = target.recipientUserId;
+	if (recipientId === user.id) throw AppError.badRequest("You can't message yourself");
+
+	const recipient = await prisma.user.findUnique({
+		where: { id: recipientId },
+		select: { id: true, status: true },
+	});
+	if (!recipient || recipient.status !== "active") throw AppError.notFound("That teammate wasn't found");
+
+	const pairKey = [user.id, recipientId].sort().join(":");
+
+	const existing = await prisma.internalConversation.findUnique({ where: { dmPairKey: pairKey } });
+	if (existing)
+		return { conversationId: existing.id, participantIds: [user.id, recipientId], isNewConversation: false };
+
+	try {
+		const created = await prisma.internalConversation.create({
+			data: {
+				type: "dm",
+				createdById: user.id,
+				dmPairKey: pairKey,
+				participants: { create: [{ userId: user.id }, { userId: recipientId }] },
+			},
+		});
+		return { conversationId: created.id, participantIds: [user.id, recipientId], isNewConversation: true };
+	} catch (err) {
+		if (!isUniqueViolationOn(err, "internal_conversations_dm_pair_key_key")) throw err;
+		// Lost the race — someone else's concurrent first-message created this
+		// pair's conversation a moment ago. Use their row; this send becomes
+		// message #2, not a duplicate thread.
+		const winner = await prisma.internalConversation.findUniqueOrThrow({ where: { dmPairKey: pairKey } });
+		return { conversationId: winner.id, participantIds: [user.id, recipientId], isNewConversation: false };
+	}
+}
+
 export const internalMessagingService = {
-	/** Whether attachments (Cloudinary) and real-time push (Pusher) are live —
-	 *  the UI degrades gracefully (text-only, polling-only) when either is
-	 *  unset, same convention as the SMS messaging module's getStatus(). */
+	/** Whether attachments (Cloudinary) are live — realtime push itself needs
+	 *  no third-party credentials (it's a plain WebSocket on this same
+	 *  server, see lib/realtime.ts), so it's always considered available;
+	 *  the frontend's connection status still degrades to "polling only" on
+	 *  its own if the socket itself fails to connect. */
 	async getStatus() {
 		return ServiceResponse.success("Link Internal Board status retrieved.", {
 			attachmentsEnabled: isCloudinaryConfigured,
-			realtimeEnabled: Boolean(getPusherKey()),
+			realtimeEnabled: true,
 		});
 	},
 
 	/**
-	 * Every DM the caller is part of, newest activity first. Unread count is
-	 * "messages from the other person after my lastReadAt" — cheap enough to
-	 * compute per-row for a staff-sized roster (a handful of VAs/Admins, not
-	 * thousands of threads).
+	 * Phase 2 — the auto-synced sidebar. Every active VA/Admin except the
+	 * caller, each merged with their DM's status if one exists (null if not —
+	 * the sidebar shows them regardless, per phase-2.md's "do not create
+	 * empty conversation records just to show users").
+	 *
+	 * Batched: one query for the roster, one for the caller's conversations,
+	 * one for unread-eligible messages across all of them — never "per user,
+	 * query their conversation" (would be an N+1 against a growing team).
 	 */
-	async listConversations(user: AuthenticatedUser) {
-		const conversations = await prisma.internalConversation.findMany({
-			where: { participants: { some: { userId: user.id } } },
-			include: {
-				participants: {
-					include: { user: { select: SENDER_SELECT } },
-				},
-			},
-			orderBy: [{ lastMessageAt: "desc" }, { createdAt: "desc" }],
-		});
-
-		const dtos = await Promise.all(
-			conversations.map(async (c) => {
-				const me = c.participants.find((p) => p.userId === user.id);
-				const others = c.participants.filter((p) => p.userId !== user.id).map((p) => p.user);
-				const unreadCount = await prisma.internalMessage.count({
-					where: {
-						conversationId: c.id,
-						senderId: { not: user.id },
-						deletedAt: null,
-						...(me?.lastReadAt ? { createdAt: { gt: me.lastReadAt } } : {}),
-					},
-				});
-				return {
-					id: c.id,
-					type: c.type,
-					name: c.name,
-					avatarUrl: c.avatarUrl,
-					// DM display identity is the other participant — Phase 2 groups
-					// will use `name`/`avatarUrl` instead once `type === "group"`.
-					otherParticipants: others,
-					lastMessageAt: c.lastMessageAt,
-					lastMessagePreview: c.lastMessagePreview,
-					unreadCount,
-					createdAt: c.createdAt,
-					updatedAt: c.updatedAt,
-				};
+	async getRoster(user: AuthenticatedUser) {
+		const [teammates, conversations] = await Promise.all([
+			prisma.user.findMany({
+				where: { id: { not: user.id }, status: "active" },
+				select: SENDER_SELECT,
+				orderBy: { name: "asc" },
 			}),
-		);
+			prisma.internalConversation.findMany({
+				where: { type: "dm", participants: { some: { userId: user.id } } },
+				include: { participants: { select: { userId: true, lastReadAt: true } } },
+			}),
+		]);
 
-		return ServiceResponse.success("Conversations retrieved.", { conversations: dtos });
-	},
+		const conversationIds = conversations.map((c) => c.id);
+		const unreadCandidates = conversationIds.length
+			? await prisma.internalMessage.findMany({
+					where: { conversationId: { in: conversationIds }, senderId: { not: user.id }, deletedAt: null },
+					select: { conversationId: true, createdAt: true },
+				})
+			: [];
 
-	/**
-	 * Finds the existing DM with `otherUserId`, or creates one. Idempotent by
-	 * design — clicking a teammate in the "new message" picker always lands on
-	 * the same thread rather than spawning duplicates.
-	 */
-	async startConversation(user: AuthenticatedUser, otherUserId: string) {
-		if (otherUserId === user.id) throw AppError.badRequest("You can't start a conversation with yourself");
+		const lastReadAtByConversationId = new Map<string, Date | null>();
+		const conversationByOtherUserId = new Map<string, (typeof conversations)[number]>();
+		for (const c of conversations) {
+			const me = c.participants.find((p) => p.userId === user.id);
+			lastReadAtByConversationId.set(c.id, me?.lastReadAt ?? null);
+			const other = c.participants.find((p) => p.userId !== user.id);
+			if (other) conversationByOtherUserId.set(other.userId, c);
+		}
 
-		const other = await prisma.user.findUnique({ where: { id: otherUserId }, select: SENDER_SELECT });
-		if (!other) throw AppError.notFound("That teammate wasn't found");
+		const unreadCountByConversationId = new Map<string, number>();
+		for (const m of unreadCandidates) {
+			const lastReadAt = lastReadAtByConversationId.get(m.conversationId) ?? null;
+			if (lastReadAt && m.createdAt <= lastReadAt) continue;
+			unreadCountByConversationId.set(m.conversationId, (unreadCountByConversationId.get(m.conversationId) ?? 0) + 1);
+		}
 
-		const existing = await prisma.internalConversation.findFirst({
-			where: {
-				type: "dm",
-				AND: [{ participants: { some: { userId: user.id } } }, { participants: { some: { userId: otherUserId } } }],
-			},
-			include: { participants: { include: { user: { select: SENDER_SELECT } } } },
+		const items = teammates.map((teammate) => {
+			const conversation = conversationByOtherUserId.get(teammate.id);
+			return {
+				user: teammate,
+				conversation: conversation
+					? {
+							id: conversation.id,
+							lastMessageAt: conversation.lastMessageAt,
+							lastMessagePreview: conversation.lastMessagePreview,
+							unreadCount: unreadCountByConversationId.get(conversation.id) ?? 0,
+						}
+					: null,
+			};
 		});
 
-		const conversation =
-			existing ??
-			(await prisma.internalConversation.create({
-				data: {
-					type: "dm",
-					createdById: user.id,
-					participants: {
-						create: [{ userId: user.id }, { userId: otherUserId }],
-					},
-				},
-				include: { participants: { include: { user: { select: SENDER_SELECT } } } },
-			}));
+		// Most recent activity first; teammates with no conversation yet sort
+		// alphabetically at the end, same as WhatsApp/Slack's "new contact"
+		// section below active chats.
+		items.sort((a, b) => {
+			const at = a.conversation?.lastMessageAt?.getTime() ?? 0;
+			const bt = b.conversation?.lastMessageAt?.getTime() ?? 0;
+			if (at !== bt) return bt - at;
+			return a.user.name.localeCompare(b.user.name);
+		});
 
-		return ServiceResponse.success(
-			existing ? "Conversation found." : "Conversation started.",
-			{
-				conversation: {
-					id: conversation.id,
-					type: conversation.type,
-					name: conversation.name,
-					avatarUrl: conversation.avatarUrl,
-					otherParticipants: conversation.participants.filter((p) => p.userId !== user.id).map((p) => p.user),
-					lastMessageAt: conversation.lastMessageAt,
-					lastMessagePreview: conversation.lastMessagePreview,
-					unreadCount: 0,
-					createdAt: conversation.createdAt,
-					updatedAt: conversation.updatedAt,
-				},
-			},
-			existing ? StatusCodes.OK : StatusCodes.CREATED,
-		);
+		return ServiceResponse.success("Roster retrieved.", { items });
 	},
 
 	async getMessages(conversationId: string, user: AuthenticatedUser, rawQuery: Record<string, unknown>) {
@@ -211,12 +273,29 @@ export const internalMessagingService = {
 		});
 	},
 
+	/**
+	 * Sends into an existing conversation OR, for a teammate the caller has
+	 * never messaged, lazily creates the DM first — see resolveConversation.
+	 * Either way the response carries the resolved `conversation.id` so a
+	 * client that started from "no conversation yet" learns the real id to
+	 * use for every message after this one.
+	 */
 	async sendMessage(
-		conversationId: string,
 		user: AuthenticatedUser,
-		input: { body?: string; attachments?: Array<Record<string, unknown>> },
+		target: MessageTarget,
+		input: { body?: string; attachments?: Array<Record<string, unknown>>; replyToId?: string },
 	) {
-		await requireParticipant(conversationId, user.id);
+		const { conversationId, participantIds, isNewConversation } = await resolveConversation(user, target);
+
+		if (input.replyToId) {
+			const original = await prisma.internalMessage.findUnique({
+				where: { id: input.replyToId },
+				select: { conversationId: true, deletedAt: true },
+			});
+			if (!original || original.conversationId !== conversationId || original.deletedAt) {
+				throw AppError.badRequest("Can't reply to that message");
+			}
+		}
 
 		const message = await prisma.$transaction(async (tx) => {
 			const created = await tx.internalMessage.create({
@@ -224,6 +303,7 @@ export const internalMessagingService = {
 					conversationId,
 					senderId: user.id,
 					body: input.body?.trim() || null,
+					replyToId: input.replyToId ?? null,
 					attachments: input.attachments?.length
 						? {
 								create: input.attachments.map((a) => ({
@@ -263,19 +343,27 @@ export const internalMessagingService = {
 				data: { lastReadAt: created.createdAt },
 			});
 
-			return created;
+			return { created, preview };
 		});
 
-		const participantIds = (
-			await prisma.internalConversationParticipant.findMany({
-				where: { conversationId },
-				select: { userId: true },
-			})
-		).map((p) => p.userId);
-		notifyInternalNewMessage(participantIds, conversationId, message.id);
-		notifyInternalConversationUpdated(participantIds, conversationId);
+		broadcastToUsers(participantIds, {
+			type: "internal.new-message",
+			conversationId,
+			messageId: message.created.id,
+			senderId: user.id,
+			preview: message.preview,
+			createdAt: message.created.createdAt.toISOString(),
+		});
+		broadcastToUsers(participantIds, { type: "internal.conversation-updated", conversationId });
 
-		return ServiceResponse.success("Message sent.", { message: messageDto(message) }, StatusCodes.CREATED);
+		return ServiceResponse.success(
+			"Message sent.",
+			{
+				message: messageDto(message.created),
+				conversation: { id: conversationId, isNew: isNewConversation },
+			},
+			201,
+		);
 	},
 
 	async markRead(conversationId: string, user: AuthenticatedUser) {
@@ -287,6 +375,26 @@ export const internalMessagingService = {
 		});
 
 		return ServiceResponse.success("Conversation marked read.", { conversationId });
+	},
+
+	/**
+	 * Typing indicator — fire-and-forget, no DB write, no history. Works even
+	 * before a conversation exists (a brand-new chat): the `recipientUserId`
+	 * branch pushes straight to that person regardless of any conversation
+	 * row, same as sendMessage's lazy path.
+	 */
+	async notifyTyping(user: AuthenticatedUser, target: MessageTarget) {
+		let recipientIds: string[];
+		if ("conversationId" in target) {
+			const { conversation } = await requireParticipant(target.conversationId, user.id);
+			recipientIds = conversation.participants.map((p) => p.userId).filter((id) => id !== user.id);
+		} else {
+			recipientIds = [target.recipientUserId];
+		}
+		for (const id of recipientIds) {
+			broadcastToUser(id, { type: "internal.typing", fromUserId: user.id, fromName: user.name });
+		}
+		return ServiceResponse.success("ok", null);
 	},
 
 	/**

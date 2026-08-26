@@ -102,9 +102,14 @@ export const API_ENDPOINTS = {
   },
   INTERNAL_MESSAGING: {
     STATUS: "/internal-messaging/status",
-    CONVERSATIONS: "/internal-messaging/conversations",
+    // Phase 2 — every teammate merged with their DM status, replacing the
+    // old "conversations that already exist" list + explicit start-a-chat step.
+    ROSTER: "/internal-messaging/roster",
     MESSAGES: (conversationId: string) => `/internal-messaging/conversations/${conversationId}/messages`,
+    /** Lazy send — no conversation exists yet; the server finds-or-creates it. */
+    SEND_LAZY: "/internal-messaging/messages",
     READ: (conversationId: string) => `/internal-messaging/conversations/${conversationId}/read`,
+    TYPING: "/internal-messaging/typing",
     UPLOADS: "/internal-messaging/uploads",
   },
 }
@@ -157,10 +162,15 @@ export const QUERY_KEYS = {
   },
   INTERNAL_MESSAGING: {
     STATUS: ["internal-messaging", "status"] as const,
-    // Prefix key — invalidating this refreshes the conversation list AND every open thread below it.
+    // Prefix key — invalidating this refreshes the roster AND every open thread below it.
     ALL: ["internal-messaging"] as const,
-    CONVERSATIONS: ["internal-messaging", "conversations"] as const,
-    MESSAGES: (conversationId: string) => ["internal-messaging", "conversations", conversationId, "messages"] as const,
+    ROSTER: ["internal-messaging", "roster"] as const,
+    // Keyed by conversationId when one exists, or `pending:<recipientUserId>`
+    // before the first message is sent — see useInternalMessaging.ts's
+    // messagesKeyId(). Same query-key slot either way, so the lazy-send
+    // flow can seed/patch it uniformly and the thread never flashes empty
+    // when the real conversation id arrives.
+    MESSAGES: (keyId: string) => ["internal-messaging", "conversations", keyId, "messages"] as const,
   },
   ADMIN: {
     USERS: ["admin", "users"] as const,

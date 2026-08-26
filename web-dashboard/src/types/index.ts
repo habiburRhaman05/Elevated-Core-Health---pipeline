@@ -515,6 +515,18 @@ export interface InternalAttachment {
  *  that references it is actually sent). */
 export type PendingInternalAttachment = Omit<InternalAttachment, "id">
 
+/** Trimmed quote of the original message a reply points at — just enough to
+ *  render "replying to: <snippet/thumbnail> — <sender>" inline. */
+export interface InternalMessageReplyRef {
+  id: string
+  body: string | null
+  senderId: string
+  senderName: string
+  attachmentPreview: Pick<InternalAttachment, "id" | "type" | "url" | "fileName"> | null
+  /** True when the original message was soft-deleted after this reply was sent. */
+  deleted: boolean
+}
+
 export interface InternalMessage {
   id: string
   conversationId: string
@@ -522,30 +534,12 @@ export interface InternalMessage {
   sender: Pick<User, "id" | "name" | "role" | "avatar">
   body: string | null
   attachments: InternalAttachment[]
+  replyTo: InternalMessageReplyRef | null
   editedAt: string | null
   deletedAt: string | null
   createdAt: string
   /** Client-only — set on the optimistic bubble while a send is in flight. */
   status?: "sending" | "failed"
-}
-
-export interface InternalConversation {
-  id: string
-  type: InternalConversationType
-  name: string | null
-  avatarUrl: string | null
-  /** DM identity — the other person(s) in the thread. Phase 2 groups will
-   *  have more than one and fall back to `name`/`avatarUrl` instead. */
-  otherParticipants: Pick<User, "id" | "name" | "role" | "avatar">[]
-  lastMessageAt: string | null
-  lastMessagePreview: string | null
-  unreadCount: number
-  createdAt: string
-  updatedAt: string
-}
-
-export interface InternalConversationsResponse {
-  conversations: InternalConversation[]
 }
 
 export interface InternalMessagesResponse {
@@ -554,3 +548,33 @@ export interface InternalMessagesResponse {
   page: number
   limit: number
 }
+
+/** A DM's status as seen from the roster — undefined identity fields since
+ *  the roster item already carries the other person via `.user`. Null when
+ *  no conversation exists yet (Phase 2: the sidebar shows the teammate
+ *  regardless). */
+export interface InternalConversationSummary {
+  id: string
+  lastMessageAt: string | null
+  lastMessagePreview: string | null
+  unreadCount: number
+}
+
+/**
+ * Phase 2 — one row of the auto-synced sidebar: a teammate, merged with
+ * their DM's status if one exists. `conversation: null` means "never
+ * messaged" — still shown, still clickable, just with an empty thread until
+ * the first message is actually sent (see useSendInternalMessage's lazy path).
+ */
+export interface InternalRosterItem {
+  user: Pick<User, "id" | "name" | "role" | "avatar">
+  conversation: InternalConversationSummary | null
+}
+
+export interface InternalRosterResponse {
+  items: InternalRosterItem[]
+}
+
+/** Either target a message/typing-ping can resolve to — an existing
+ *  conversation, or (before the first message) a specific teammate. */
+export type InternalMessageTarget = { conversationId: string } | { recipientUserId: string }

@@ -3,7 +3,7 @@ import { StatusCodes } from "http-status-codes";
 
 import { handleServiceResponse } from "@/utils/httpHandlers";
 import { ServiceResponse } from "@/utils/serviceResponse";
-import { internalMessagingService } from "./internal-messaging.service";
+import { internalMessagingService, type MessageTarget } from "./internal-messaging.service";
 
 // Same normalizer as messaging.controller.ts's param() / patients.controller.ts's
 // paramId() — Express types a route param as `string | string[]`.
@@ -25,14 +25,10 @@ export const internalMessagingController = {
 		handleServiceResponse(await internalMessagingService.getStatus(), res);
 	},
 
-	async listConversations(req: Request, res: Response): Promise<void> {
+	/** Phase 2 auto-synced sidebar — every teammate, merged with conversation status. */
+	async getRoster(req: Request, res: Response): Promise<void> {
 		if (!requireUser(req, res)) return;
-		handleServiceResponse(await internalMessagingService.listConversations(req.user!), res);
-	},
-
-	async startConversation(req: Request, res: Response): Promise<void> {
-		if (!requireUser(req, res)) return;
-		handleServiceResponse(await internalMessagingService.startConversation(req.user!, req.body.userId), res);
+		handleServiceResponse(await internalMessagingService.getRoster(req.user!), res);
 	},
 
 	async getMessages(req: Request, res: Response): Promise<void> {
@@ -43,13 +39,28 @@ export const internalMessagingController = {
 		);
 	},
 
+	/** Existing-conversation send — :id is a real conversation the caller belongs to. */
 	async sendMessage(req: Request, res: Response): Promise<void> {
 		if (!requireUser(req, res)) return;
 		handleServiceResponse(
-			await internalMessagingService.sendMessage(param(req, "id"), req.user!, {
-				body: req.body.body,
-				attachments: req.body.attachments,
-			}),
+			await internalMessagingService.sendMessage(
+				req.user!,
+				{ conversationId: param(req, "id") },
+				{ body: req.body.body, attachments: req.body.attachments, replyToId: req.body.replyToId },
+			),
+			res,
+		);
+	},
+
+	/** Lazy send — no conversation may exist yet; the service finds-or-creates it. */
+	async sendLazyMessage(req: Request, res: Response): Promise<void> {
+		if (!requireUser(req, res)) return;
+		handleServiceResponse(
+			await internalMessagingService.sendMessage(
+				req.user!,
+				{ recipientUserId: req.body.recipientUserId },
+				{ body: req.body.body, attachments: req.body.attachments, replyToId: req.body.replyToId },
+			),
 			res,
 		);
 	},
@@ -57,6 +68,14 @@ export const internalMessagingController = {
 	async markRead(req: Request, res: Response): Promise<void> {
 		if (!requireUser(req, res)) return;
 		handleServiceResponse(await internalMessagingService.markRead(param(req, "id"), req.user!), res);
+	},
+
+	async notifyTyping(req: Request, res: Response): Promise<void> {
+		if (!requireUser(req, res)) return;
+		const target: MessageTarget = req.body.conversationId
+			? { conversationId: req.body.conversationId }
+			: { recipientUserId: req.body.recipientUserId };
+		handleServiceResponse(await internalMessagingService.notifyTyping(req.user!, target), res);
 	},
 
 	async uploadAttachment(req: Request, res: Response): Promise<void> {

@@ -1,15 +1,16 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
-import { AlertTriangle, File as FileIcon, Loader2, Send, X } from "lucide-react"
+import { AlertTriangle, File as FileIcon, Loader2, Reply, Send, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import { InternalMessagingService } from "@/services/internal-messaging.service"
-import type { PendingInternalAttachment } from "@/types"
+import type { InternalMessage, PendingInternalAttachment } from "@/types"
 import { InternalAttachmentPicker } from "./internal-attachment-picker"
+import { InternalEmojiPicker } from "./internal-emoji-picker"
 
 interface PendingUpload {
   id: string
@@ -21,15 +22,16 @@ interface PendingUpload {
 }
 
 function PendingUploadThumb({ upload, onRemove }: { upload: PendingUpload; onRemove: () => void }) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  // Computed during render (not written to state from an effect) — a given
+  // upload's File instance never changes, so this only ever recomputes when
+  // it's actually a different file. The effect below is cleanup-only.
+  const previewUrl = useMemo(() => (upload.file.type.startsWith("image/") ? URL.createObjectURL(upload.file) : null), [upload.file])
 
   useEffect(() => {
-    if (!upload.file.type.startsWith("image/")) return
-    const url = URL.createObjectURL(upload.file)
-    setPreviewUrl(url)
-    return () => URL.revokeObjectURL(url)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- a given upload's File instance never changes across re-renders
-  }, [upload.file])
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl)
+    }
+  }, [previewUrl])
 
   return (
     <motion.div
@@ -89,10 +91,26 @@ interface InternalComposerProps {
   disabled?: boolean
   disabledReason?: string
   attachmentsEnabled: boolean
+  /** The caller (InternalThread) already owns `replyingTo` — it reads that
+   *  itself rather than needing it echoed back through this callback. */
   onSend: (body: string | undefined, attachments: PendingInternalAttachment[] | undefined) => void
+  /** Fired on every keystroke — the caller throttles the actual network ping (see useSendTyping). */
+  onDraftChange?: () => void
+  replyingTo: InternalMessage | null
+  onCancelReply: () => void
 }
 
-export function InternalComposer({ disabled, disabledReason, attachmentsEnabled, onSend }: InternalComposerProps) {
+export interface InternalComposerHandle {
+  /** Lets a drop target OUTSIDE this component (the whole chat pane, see
+   *  InternalThread) feed files into the same upload pipeline as the
+   *  attach button/popover's own drop zone. */
+  addFiles: (files: File[]) => void
+}
+
+export const InternalComposer = forwardRef<InternalComposerHandle, InternalComposerProps>(function InternalComposer(
+  { disabled, disabledReason, attachmentsEnabled, onSend, onDraftChange, replyingTo, onCancelReply },
+  ref,
+) {
   const [draft, setDraft] = useState("")
   const [uploads, setUploads] = useState<PendingUpload[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -126,7 +144,28 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
     for (const file of files) startUpload(file)
   }
 
+  useImperativeHandle(ref, () => ({ addFiles: handleFilesSelected }))
+
   const removeUpload = (id: string) => setUploads((prev) => prev.filter((u) => u.id !== id))
+
+  /** Inserts at the caret rather than appending, so an emoji can go mid-sentence. */
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current
+    if (!el) {
+      setDraft((d) => d + emoji)
+      return
+    }
+    const start = el.selectionStart ?? draft.length
+    const end = el.selectionEnd ?? draft.length
+    const next = draft.slice(0, start) + emoji + draft.slice(end)
+    setDraft(next)
+    onDraftChange?.()
+    requestAnimationFrame(() => {
+      el.focus()
+      const caret = start + emoji.length
+      el.setSelectionRange(caret, caret)
+    })
+  }
 
   const handleSend = () => {
     if (!canSend) return
@@ -135,7 +174,16 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
     onSend(body, attachments.length > 0 ? attachments : undefined)
     setDraft("")
     setUploads([])
+    onCancelReply()
   }
+
+  // Replying focuses the composer — same as clicking into it manually, just
+  // one less step after tapping the reply icon on a message.
+  useEffect(() => {
+    if (replyingTo) textareaRef.current?.focus()
+  }, [replyingTo])
+
+  const replySnippet = replyingTo?.body?.trim() || (replyingTo?.attachments[0] ? `📎 ${replyingTo.attachments[0].fileName}` : "")
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -145,7 +193,10 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
   }
 
   return (
-    <div className="border-t border-gray-100 shrink-0 bg-white p-3">
+    // pb-[calc(...)] — the thread panel now runs edge-to-edge on mobile
+    // (no bottom-nav offset), so the composer needs its own safe-area
+    // padding to clear a phone's home-indicator/gesture bar itself.
+    <div className="border-t border-gray-100 shrink-0 bg-white p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
       <div
         className={cn(
           "rounded-2xl border border-gray-200 bg-white transition-colors",
@@ -159,6 +210,31 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
             {disabledReason}
           </div>
         )}
+
+        <AnimatePresence>
+          {replyingTo && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="flex items-start gap-2 mx-2 mt-2 px-2.5 py-1.5 rounded-lg bg-[#EBF7EC] border border-[#65BD6C]/30 overflow-hidden"
+            >
+              <Reply className="w-3.5 h-3.5 text-[#036638] shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] font-bold text-[#036638]">Replying to {replyingTo.sender.name}</p>
+                <p className="text-xs text-[#374151] truncate">{replySnippet}</p>
+              </div>
+              <button
+                type="button"
+                onClick={onCancelReply}
+                aria-label="Cancel reply"
+                className="p-0.5 rounded text-[#036638]/60 hover:text-[#036638] hover:bg-white/60 transition-colors shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {uploads.length > 0 && (
@@ -178,7 +254,10 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
         <Textarea
           ref={textareaRef}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            if (e.target.value.trim()) onDraftChange?.()
+          }}
           onKeyDown={handleKeyDown}
           placeholder={disabled ? "Select a conversation to start chatting" : "Write a message..."}
           disabled={disabled}
@@ -188,7 +267,8 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
 
         <div className="flex items-center justify-between gap-1 px-1.5 pb-1.5">
           <div className="flex items-center gap-0.5">
-            <InternalAttachmentPicker disabled={disabled || !attachmentsEnabled} onFilesSelected={handleFilesSelected} />
+            <InternalEmojiPicker disabled={disabled} onSelect={insertEmoji} />
+            <InternalAttachmentPicker disabled={disabled} notConfigured={!attachmentsEnabled} onFilesSelected={handleFilesSelected} />
           </div>
           <Button
             type="button"
@@ -204,4 +284,4 @@ export function InternalComposer({ disabled, disabledReason, attachmentsEnabled,
       </div>
     </div>
   )
-}
+})

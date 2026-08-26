@@ -52,6 +52,26 @@ export function authorizeChannel(socketId: string, channelName: string): { auth:
 	return typeof authResponse === "string" ? { auth: authResponse } : (authResponse as { auth: string });
 }
 
+/**
+ * Same as authorizeChannel, but for a "presence-" channel — these require
+ * `channel_data` (who this socket represents) baked into the auth response
+ * so every other subscriber's `members` list can render it. Used only for
+ * the Link Internal Board presence channel (online/offline dots).
+ */
+export function authorizePresenceChannel(
+	socketId: string,
+	channelName: string,
+	user: { id: string; name: string },
+): { auth: string; channel_data: string } | null {
+	const p = getPusher();
+	if (!p) return null;
+	const authResponse = p.authorizeChannel(socketId, channelName, {
+		user_id: user.id,
+		user_info: { name: user.name },
+	});
+	return authResponse as { auth: string; channel_data: string };
+}
+
 /** Channel name for conversation-list-level updates (unread count, last message preview). */
 export const MESSAGING_CHANNEL = "private-messaging";
 
@@ -117,25 +137,49 @@ export function internalConversationChannel(conversationId: string): string {
 }
 
 /**
- * Notify a specific set of participants (their personal inbox channels) that
- * a conversation has a new message or updated metadata. Unlike the SMS
- * module's single shared MESSAGING_CHANNEL (every VA sees every patient
- * thread), internal DMs are private — only the two participants should be
- * pushed, so this fans out per-user rather than broadcasting to everyone.
+ * One shared presence channel every staff member subscribes to — gives the
+ * whole roster online/offline for free via Pusher's built-in member
+ * add/remove events, no per-DM presence bookkeeping needed. Deliberately
+ * unauthenticated-content: presence channels only ever carry {id, name}
+ * (see authorizePresenceChannel), never anything else.
  */
-export function notifyInternalNewMessage(participantIds: string[], conversationId: string, messageId: string): void {
+export const INTERNAL_BOARD_PRESENCE_CHANNEL = "presence-internal-board";
+
+/** What a sidebar-patch push carries — enough for the client to update one
+ *  row (preview, timestamp, unread) and re-sort, without a refetch. Never
+ *  the full message body-as-such beyond the trimmed preview already meant
+ *  for display. */
+export interface InternalNewMessagePayload {
+	conversationId: string;
+	messageId: string;
+	senderId: string;
+	preview: string;
+	createdAt: string;
+}
+
+/**
+ * Notify a specific set of participants (their personal inbox channels) that
+ * a conversation has a new message. Unlike the SMS module's single shared
+ * MESSAGING_CHANNEL (every VA sees every patient thread), internal DMs are
+ * private — only the two participants should be pushed, so this fans out
+ * per-user rather than broadcasting to everyone. The payload carries enough
+ * (sender, preview, timestamp) for the sidebar to patch just that one row
+ * in place instead of refetching the whole list.
+ */
+export function notifyInternalNewMessage(participantIds: string[], payload: InternalNewMessagePayload): void {
 	const p = getPusher();
 	if (!p) return;
 
-	const data = { conversationId, messageId };
-
 	try {
-		p.trigger(internalConversationChannel(conversationId), "new-message", data);
+		p.trigger(internalConversationChannel(payload.conversationId), "new-message", payload);
 		for (const userId of participantIds) {
-			p.trigger(internalBoardChannel(userId), "new-message", data);
+			p.trigger(internalBoardChannel(userId), "new-message", payload);
 		}
 	} catch (err) {
-		logger.warn({ err, conversationId }, "Pusher trigger failed for internal-board new-message");
+		logger.warn(
+			{ err, conversationId: payload.conversationId },
+			"Pusher trigger failed for internal-board new-message",
+		);
 	}
 }
 
@@ -152,5 +196,24 @@ export function notifyInternalConversationUpdated(participantIds: string[], conv
 		}
 	} catch (err) {
 		logger.warn({ err, conversationId }, "Pusher trigger failed for internal-board conversation-updated");
+	}
+}
+
+/**
+ * Typing indicator — server-triggered (not a Pusher client event) so it
+ * stays consistent with the rest of this app's server-authoritative
+ * approach and needs no extra Pusher dashboard configuration. Pushed to the
+ * recipient's personal board channel rather than a per-conversation one,
+ * since a brand-new chat (no conversation row yet) still needs to show
+ * "typing…" before the first message has been sent.
+ */
+export function notifyInternalTyping(recipientId: string, from: { id: string; name: string }): void {
+	const p = getPusher();
+	if (!p) return;
+
+	try {
+		p.trigger(internalBoardChannel(recipientId), "typing", from);
+	} catch (err) {
+		logger.warn({ err, recipientId }, "Pusher trigger failed for internal-board typing");
 	}
 }

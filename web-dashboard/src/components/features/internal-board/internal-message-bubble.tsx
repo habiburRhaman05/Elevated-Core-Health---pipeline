@@ -3,10 +3,51 @@
 import { useState } from "react"
 import { createPortal } from "react-dom"
 import { motion } from "framer-motion"
-import { AlertTriangle, Download, File as FileIcon, Loader2, X } from "lucide-react"
+import { AlertTriangle, Download, File as FileIcon, Loader2, Reply, X } from "lucide-react"
 import { cn, formatMessageTimestamp } from "@/lib/utils"
 import { InternalAvatar } from "./internal-avatar"
 import type { InternalAttachment, InternalMessage } from "@/types"
+
+/** DOM id for a message row — used to scroll to the original when someone
+ *  taps a reply's quoted block. */
+export function messageDomId(messageId: string): string {
+  return `internal-message-${messageId}`
+}
+
+/** Compact quoted strip shown inside a reply bubble, above its own content —
+ *  tapping it scrolls the original message into view. */
+function ReplyQuote({ reply, isOwn }: { reply: NonNullable<InternalMessage["replyTo"]>; isOwn: boolean }) {
+  const snippet = reply.deleted
+    ? "Original message deleted"
+    : reply.body?.trim() || (reply.attachmentPreview ? `📎 ${reply.attachmentPreview.fileName}` : "")
+
+  return (
+    <button
+      type="button"
+      onClick={() => document.getElementById(messageDomId(reply.id))?.scrollIntoView({ behavior: "smooth", block: "center" })}
+      className={cn(
+        // This quote is a SIBLING of the message bubble, stacked above it on
+        // the plain (white) chat background — never nested inside the green
+        // bubble itself. So it needs to read clearly against white on BOTH
+        // sides, not a translucent-white style that only works on a dark
+        // bubble backdrop (that was the bug: invisible on isOwn's own side).
+        "flex items-center gap-2 px-2.5 py-1.5 rounded-lg border-l-[3px] max-w-full text-left transition-colors shadow-sm",
+        isOwn
+          ? "bg-[#036638]/8 border-[#036638] hover:bg-[#036638]/12"
+          : "bg-gray-100 border-[#036638]/40 hover:bg-gray-200/70",
+      )}
+    >
+      {reply.attachmentPreview?.type === "image" && (
+        // eslint-disable-next-line @next/next/no-img-element -- tiny quoted-reply thumbnail
+        <img src={reply.attachmentPreview.url} alt="" className="w-7 h-7 rounded object-cover shrink-0" />
+      )}
+      <div className="min-w-0">
+        <p className="text-[10px] font-bold truncate text-[#036638]">{reply.senderName}</p>
+        <p className={cn("text-[11px] truncate text-[#4B5563]", reply.deleted && "italic")}>{snippet}</p>
+      </div>
+    </button>
+  )
+}
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -106,14 +147,17 @@ function ImageLightbox({ url, onClose }: { url: string; onClose: () => void }) {
 export function InternalMessageBubble({
   message,
   isOwn,
+  onReply,
 }: {
   message: InternalMessage
   isOwn: boolean
+  onReply: (message: InternalMessage) => void
 }) {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const isSending = message.status === "sending"
   const isFailed = message.status === "failed"
   const hasBody = !!message.body?.trim()
+  const canReply = !isSending && !isFailed && !message.id.startsWith("temp-")
 
   return (
     <motion.div
@@ -121,34 +165,51 @@ export function InternalMessageBubble({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className={cn("group flex items-end gap-2", isOwn ? "flex-row-reverse" : "flex-row")}
+      id={messageDomId(message.id)}
+      className={cn("group flex items-end gap-2 scroll-mt-4", isOwn ? "flex-row-reverse" : "flex-row")}
     >
       <InternalAvatar name={message.sender.name} colorKey={message.sender.id} avatarUrl={message.sender.avatar} size="sm" />
 
       <div className={cn("flex flex-col max-w-[75%] sm:max-w-[65%]", isOwn ? "items-end" : "items-start")}>
-        <div className={cn("flex flex-col gap-1.5", isOwn ? "items-end" : "items-start")}>
-          {message.attachments.length > 0 && (
-            <div className={cn("flex flex-col gap-1.5", isOwn ? "items-end" : "items-start")}>
-              {message.attachments.map((a) => (
-                <AttachmentTile key={a.id} attachment={a} onOpenImage={setLightboxUrl} />
-              ))}
-            </div>
-          )}
+        <div className={cn("flex items-end gap-1", isOwn ? "flex-row-reverse" : "flex-row")}>
+          <div className={cn("flex flex-col gap-1.5", isOwn ? "items-end" : "items-start")}>
+            {message.replyTo && <ReplyQuote reply={message.replyTo} isOwn={isOwn} />}
 
-          {hasBody && (
-            <div
-              className={cn(
-                "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words transition-all",
-                isOwn
-                  ? isFailed
-                    ? "bg-[#CC3333]/10 text-[#CC3333] border border-[#CC3333]/30 rounded-br-sm"
-                    : "bg-[#036638] text-white rounded-br-sm"
-                  : "bg-[#F3F4F6] text-[#1A1B1E] rounded-bl-sm",
-                isSending && "opacity-60",
-              )}
+            {message.attachments.length > 0 && (
+              <div className={cn("flex flex-col gap-1.5", isOwn ? "items-end" : "items-start")}>
+                {message.attachments.map((a) => (
+                  <AttachmentTile key={a.id} attachment={a} onOpenImage={setLightboxUrl} />
+                ))}
+              </div>
+            )}
+
+            {hasBody && (
+              <div
+                className={cn(
+                  "rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words transition-all",
+                  isOwn
+                    ? isFailed
+                      ? "bg-[#CC3333]/10 text-[#CC3333] border border-[#CC3333]/30 rounded-br-sm"
+                      : "bg-[#036638] text-white rounded-br-sm"
+                    : "bg-[#F3F4F6] text-[#1A1B1E] rounded-bl-sm",
+                  isSending && "opacity-60",
+                )}
+              >
+                {message.body}
+              </div>
+            )}
+          </div>
+
+          {canReply && (
+            <button
+              type="button"
+              title="Reply"
+              aria-label="Reply to this message"
+              onClick={() => onReply(message)}
+              className="p-1 rounded-md text-[#9CA3AF] hover:text-[#036638] hover:bg-[#036638]/8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
             >
-              {message.body}
-            </div>
+              <Reply className="w-3.5 h-3.5" />
+            </button>
           )}
         </div>
 

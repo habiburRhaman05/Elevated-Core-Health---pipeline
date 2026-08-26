@@ -2,12 +2,23 @@ import axiosInstance from "@/lib/axios"
 import { API_ENDPOINTS } from "@/constants"
 import type {
   ApiResponse,
-  InternalConversation,
-  InternalConversationsResponse,
   InternalMessage,
   InternalMessagesResponse,
+  InternalMessageTarget,
+  InternalRosterResponse,
   PendingInternalAttachment,
 } from "@/types"
+
+interface SendMessageInput {
+  body?: string
+  attachments?: PendingInternalAttachment[]
+  replyToId?: string
+}
+
+interface SendMessageResult {
+  message: InternalMessage
+  conversation: { id: string; isNew: boolean }
+}
 
 export const InternalMessagingService = {
   async getStatus(): Promise<{ attachmentsEnabled: boolean; realtimeEnabled: boolean }> {
@@ -17,18 +28,10 @@ export const InternalMessagingService = {
     return data.data
   },
 
-  async listConversations(): Promise<InternalConversationsResponse> {
-    const { data } = await axiosInstance.get<ApiResponse<InternalConversationsResponse>>(
-      API_ENDPOINTS.INTERNAL_MESSAGING.CONVERSATIONS,
-    )
-    return data.data
-  },
-
-  /** Idempotent — finds the existing DM with this teammate, or creates one. */
-  async startConversation(userId: string): Promise<{ conversation: InternalConversation }> {
-    const { data } = await axiosInstance.post<ApiResponse<{ conversation: InternalConversation }>>(
-      API_ENDPOINTS.INTERNAL_MESSAGING.CONVERSATIONS,
-      { userId },
+  /** Phase 2 — every teammate merged with their DM status. */
+  async getRoster(): Promise<InternalRosterResponse> {
+    const { data } = await axiosInstance.get<ApiResponse<InternalRosterResponse>>(
+      API_ENDPOINTS.INTERNAL_MESSAGING.ROSTER,
     )
     return data.data
   },
@@ -41,15 +44,19 @@ export const InternalMessagingService = {
     return data.data
   },
 
-  async sendMessage(
-    conversationId: string,
-    body: string | undefined,
-    attachments?: PendingInternalAttachment[],
-  ): Promise<{ message: InternalMessage }> {
-    const { data } = await axiosInstance.post<ApiResponse<{ message: InternalMessage }>>(
-      API_ENDPOINTS.INTERNAL_MESSAGING.MESSAGES(conversationId),
-      { body, attachments },
-    )
+  /**
+   * Sends into an existing conversation, or — when `target` is a
+   * `recipientUserId` (no conversation yet) — hits the lazy-create endpoint
+   * instead. Either way the response's `conversation.id` is the real id to
+   * use for every message after this one.
+   */
+  async sendMessage(target: InternalMessageTarget, input: SendMessageInput): Promise<SendMessageResult> {
+    const url =
+      "conversationId" in target
+        ? API_ENDPOINTS.INTERNAL_MESSAGING.MESSAGES(target.conversationId)
+        : API_ENDPOINTS.INTERNAL_MESSAGING.SEND_LAZY
+    const body = "conversationId" in target ? input : { ...input, recipientUserId: target.recipientUserId }
+    const { data } = await axiosInstance.post<ApiResponse<SendMessageResult>>(url, body)
     return data.data
   },
 
@@ -58,6 +65,13 @@ export const InternalMessagingService = {
       API_ENDPOINTS.INTERNAL_MESSAGING.READ(conversationId),
     )
     return data.data
+  },
+
+  /** Fire-and-forget typing ping — errors are never surfaced to the user,
+   *  this is a pure nicety. */
+  async sendTyping(target: InternalMessageTarget): Promise<void> {
+    const body = "conversationId" in target ? { conversationId: target.conversationId } : { recipientUserId: target.recipientUserId }
+    await axiosInstance.post(API_ENDPOINTS.INTERNAL_MESSAGING.TYPING, body)
   },
 
   /** Uploads one file and returns its metadata — no message is created yet.
