@@ -1,5 +1,11 @@
 import { Prisma } from "@/generated/prisma/client";
 import { isCloudinaryConfigured, uploadInternalMessageAttachment } from "@/lib/cloudinary";
+import {
+	getPusherKey,
+	notifyInternalConversationUpdated,
+	notifyInternalNewMessage,
+	notifyInternalTyping,
+} from "@/lib/pusher";
 import { broadcastToUser, broadcastToUsers } from "@/lib/realtime";
 import type { AuthenticatedUser } from "@/lib/types";
 import { AppError } from "@/utils/appError";
@@ -153,15 +159,20 @@ async function resolveConversation(
 }
 
 export const internalMessagingService = {
-	/** Whether attachments (Cloudinary) are live — realtime push itself needs
-	 *  no third-party credentials (it's a plain WebSocket on this same
-	 *  server, see lib/realtime.ts), so it's always considered available;
-	 *  the frontend's connection status still degrades to "polling only" on
-	 *  its own if the socket itself fails to connect. */
+	/**
+	 * Dual realtime transport: every push below fires over BOTH the native
+	 * WebSocket (lib/realtime.ts — free, no setup, but can't stay open on a
+	 * classic serverless deploy like this app's Vercel backend) AND Pusher
+	 * (lib/pusher.ts — needs a free-tier account, but works everywhere,
+	 * including serverless). `pusherEnabled` lets the frontend know whether
+	 * it's worth even trying that second connection; attachmentsEnabled is
+	 * Cloudinary, unrelated to either.
+	 */
 	async getStatus() {
 		return ServiceResponse.success("Link Internal Board status retrieved.", {
 			attachmentsEnabled: isCloudinaryConfigured,
 			realtimeEnabled: true,
+			pusherEnabled: Boolean(getPusherKey()),
 		});
 	},
 
@@ -346,6 +357,9 @@ export const internalMessagingService = {
 			return { created, preview };
 		});
 
+		// Dual transport — see getStatus()'s doc comment. Both no-op safely
+		// (Pusher when unconfigured; WS when nobody's connected), so firing
+		// both unconditionally is always safe, never redundant-error-prone.
 		broadcastToUsers(participantIds, {
 			type: "internal.new-message",
 			conversationId,
@@ -355,6 +369,14 @@ export const internalMessagingService = {
 			createdAt: message.created.createdAt.toISOString(),
 		});
 		broadcastToUsers(participantIds, { type: "internal.conversation-updated", conversationId });
+		notifyInternalNewMessage(participantIds, {
+			conversationId,
+			messageId: message.created.id,
+			senderId: user.id,
+			preview: message.preview,
+			createdAt: message.created.createdAt.toISOString(),
+		});
+		notifyInternalConversationUpdated(participantIds, conversationId);
 
 		return ServiceResponse.success(
 			"Message sent.",
@@ -393,6 +415,7 @@ export const internalMessagingService = {
 		}
 		for (const id of recipientIds) {
 			broadcastToUser(id, { type: "internal.typing", fromUserId: user.id, fromName: user.name });
+			notifyInternalTyping(id, { id: user.id, name: user.name });
 		}
 		return ServiceResponse.success("ok", null);
 	},
