@@ -1671,11 +1671,14 @@ const isExpired = () => {
                             <label className={contactLabelClass(false)}>Email</label>
                             <input
                               type="email"
-                              readOnly
+                              // disabled={patient.email?.length}
                               title="Email can't be changed here"
+                              placeholder="Entter Email Address"
                               {...register("email")}
-                              className={cn(contactInputClass(false), "bg-gray-50 text-gray-500 cursor-not-allowed")}
+                              className={cn(contactInputClass(false))}
+
                             />
+                          
                           </div>
                           <div>
                             <label className={contactLabelClass(false)}>Copay Amount</label>
