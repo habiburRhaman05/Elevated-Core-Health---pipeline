@@ -488,3 +488,69 @@ export const STAGE_HINTS: Record<string, string> = Object.fromEntries(
 )
 
 export const STAGE_ORDER: string[] = DEFAULT_STAGES.map((s) => s.key)
+
+// =============================================================================
+// Link Internal Board — internal VA/Admin staff chat. Fully separate from the
+// Sms* (patient SMS) types above; a DM here has nothing to do with a patient.
+// =============================================================================
+
+export type InternalConversationType = "dm" | "group"
+export type InternalAttachmentType = "image" | "video" | "audio" | "file"
+
+export interface InternalAttachment {
+  id: string
+  type: InternalAttachmentType
+  url: string
+  thumbnailUrl?: string | null
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+  width?: number | null
+  height?: number | null
+  durationSeconds?: number | null
+}
+
+/** What POST /internal-messaging/uploads hands back — same shape as
+ *  InternalAttachment but with no `id` yet (not persisted until the message
+ *  that references it is actually sent). */
+export type PendingInternalAttachment = Omit<InternalAttachment, "id">
+
+export interface InternalMessage {
+  id: string
+  conversationId: string
+  senderId: string
+  sender: Pick<User, "id" | "name" | "role" | "avatar">
+  body: string | null
+  attachments: InternalAttachment[]
+  editedAt: string | null
+  deletedAt: string | null
+  createdAt: string
+  /** Client-only — set on the optimistic bubble while a send is in flight. */
+  status?: "sending" | "failed"
+}
+
+export interface InternalConversation {
+  id: string
+  type: InternalConversationType
+  name: string | null
+  avatarUrl: string | null
+  /** DM identity — the other person(s) in the thread. Phase 2 groups will
+   *  have more than one and fall back to `name`/`avatarUrl` instead. */
+  otherParticipants: Pick<User, "id" | "name" | "role" | "avatar">[]
+  lastMessageAt: string | null
+  lastMessagePreview: string | null
+  unreadCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface InternalConversationsResponse {
+  conversations: InternalConversation[]
+}
+
+export interface InternalMessagesResponse {
+  messages: InternalMessage[]
+  total: number
+  page: number
+  limit: number
+}

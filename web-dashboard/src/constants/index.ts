@@ -18,6 +18,7 @@ export const ROUTES = {
     IMPORT: "/dashboard/import",
     PROFILE: "/dashboard/profile",
     MESSAGES: "/dashboard/messages",
+    INTERNAL_MESSAGING: "/dashboard/internal-messaging",
   },
   ADMIN: {
     HOME: "/admin/dashboard",
@@ -35,6 +36,7 @@ export const ROUTES = {
     PROFILE: "/admin/dashboard/profile",
     SETTINGS_WEBHOOKS: "/admin/dashboard/settings/webhooks",
     MESSAGES: "/admin/dashboard/messages",
+    INTERNAL_MESSAGING: "/admin/dashboard/internal-messaging",
   },
 }
 
@@ -98,6 +100,13 @@ export const API_ENDPOINTS = {
     CALL_RECORDING: (callLogId: string) => `/messaging/calls/${callLogId}/recording`,
     CALL_SUMMARY: (callLogId: string) => `/messaging/calls/${callLogId}/summary`,
   },
+  INTERNAL_MESSAGING: {
+    STATUS: "/internal-messaging/status",
+    CONVERSATIONS: "/internal-messaging/conversations",
+    MESSAGES: (conversationId: string) => `/internal-messaging/conversations/${conversationId}/messages`,
+    READ: (conversationId: string) => `/internal-messaging/conversations/${conversationId}/read`,
+    UPLOADS: "/internal-messaging/uploads",
+  },
 }
 
 export const QUERY_KEYS = {
@@ -145,6 +154,13 @@ export const QUERY_KEYS = {
     MESSAGES: (conversationId: string) => ["messaging", "conversations", conversationId, "messages"] as const,
     CALL_RECORDING: (callLogId: string) => ["messaging", "calls", callLogId, "recording"] as const,
     CALL_SUMMARY: (callLogId: string) => ["messaging", "calls", callLogId, "summary"] as const,
+  },
+  INTERNAL_MESSAGING: {
+    STATUS: ["internal-messaging", "status"] as const,
+    // Prefix key — invalidating this refreshes the conversation list AND every open thread below it.
+    ALL: ["internal-messaging"] as const,
+    CONVERSATIONS: ["internal-messaging", "conversations"] as const,
+    MESSAGES: (conversationId: string) => ["internal-messaging", "conversations", conversationId, "messages"] as const,
   },
   ADMIN: {
     USERS: ["admin", "users"] as const,

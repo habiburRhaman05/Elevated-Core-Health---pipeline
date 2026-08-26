@@ -25,12 +25,14 @@ import {
   X,
   NotebookText,
   MessageSquare,
+  Link2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ROUTES } from "@/constants"
 import { useAuth } from "@/hooks/auth/useAuth"
 import { isAdminOrAbove, roleLabel } from "@/lib/roles"
 import { useConversations } from "@/hooks/query/useMessaging"
+import { useInternalConversations } from "@/hooks/query/useInternalMessaging"
 
 const VA_NAV = [
   { section: "Main", items: [
@@ -39,6 +41,7 @@ const VA_NAV = [
   ]},
   { section: "Operations", items: [
     { href: ROUTES.DASHBOARD.MESSAGES, icon: MessageSquare, label: "Messages", badgeKey: "unread" as const },
+    { href: ROUTES.DASHBOARD.INTERNAL_MESSAGING, icon: Link2, label: "Link Internal Board", badgeKey: "internalUnread" as const },
     { href: ROUTES.DASHBOARD.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.DASHBOARD.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.DASHBOARD.REPORTING, icon: BarChart3, label: "My Report" },
@@ -55,6 +58,7 @@ const ADMIN_NAV = [
   ]},
   { section: "Operations", items: [
     { href: ROUTES.ADMIN.MESSAGES, icon: MessageSquare, label: "Messages", badgeKey: "unread" as const },
+    { href: ROUTES.ADMIN.INTERNAL_MESSAGING, icon: Link2, label: "Internal Communications", badgeKey: "internalUnread" as const },
     { href: ROUTES.ADMIN.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.ADMIN.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.ADMIN.REPORTING, icon: BarChart3, label: "Reporting" },
@@ -91,6 +95,13 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
   // both mounted doesn't double the network traffic.
   const { data: conversationsData } = useConversations({ limit: 100 })
   const unreadTotal = (conversationsData?.conversations ?? []).reduce((sum, c) => sum + c.unreadCount, 0)
+  // Same "shares its query key/poll with the page that actually needs it"
+  // idea as the SMS badge above — Link Internal Board's own conversation list.
+  const { data: internalConversationsData } = useInternalConversations()
+  const internalUnreadTotal = (internalConversationsData?.conversations ?? []).reduce(
+    (sum, c) => sum + c.unreadCount,
+    0,
+  )
 
   const handleLogout = async () => {
     setLoggingOut(true)
@@ -167,7 +178,12 @@ export function EchSidebar({ isCollapsed, setIsCollapsed, onMobileClose }: EchSi
               {section.items.map((item) => {
                 const Icon = item.icon
                 const isActive = pathname === item.href
-                const badgeCount = "badgeKey" in item && item.badgeKey === "unread" ? unreadTotal : 0
+                const badgeCount =
+                  "badgeKey" in item && item.badgeKey === "unread"
+                    ? unreadTotal
+                    : "badgeKey" in item && item.badgeKey === "internalUnread"
+                      ? internalUnreadTotal
+                      : 0
                 return (
                   <Link
                     key={item.href}

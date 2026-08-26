@@ -42,3 +42,66 @@ export function uploadAvatarBuffer(buffer: Buffer, userId: string): Promise<stri
 		stream.end(buffer);
 	});
 }
+
+export interface UploadedAttachment {
+	url: string;
+	thumbnailUrl: string | null;
+	width: number | null;
+	height: number | null;
+	durationSeconds: number | null;
+}
+
+/**
+ * Uploads a Link Internal Board message attachment (image/video/audio/generic
+ * file). Unlike the fixed-transform avatar upload above, this keeps the
+ * original file untouched — chat attachments must round-trip exactly what
+ * the sender picked, not a cropped/resized version.
+ *
+ * `resourceType` mirrors Cloudinary's own three buckets: "image" and "video"
+ * (which also covers audio) get real transformation/thumbnail support;
+ * anything else (pdf, docx, zip, ...) goes through as "raw".
+ */
+export function uploadInternalMessageAttachment(
+	buffer: Buffer,
+	fileName: string,
+	resourceType: "image" | "video" | "raw",
+): Promise<UploadedAttachment> {
+	return new Promise((resolve, reject) => {
+		const stream = cloudinary.uploader.upload_stream(
+			{
+				folder: "ech-pipeline/internal-board",
+				resource_type: resourceType,
+				// Cloudinary needs the original extension to serve raw files
+				// (pdf/docx/...) with a sane filename/content-type on download.
+				filename_override: fileName,
+				use_filename: true,
+				unique_filename: true,
+			},
+			(error, result) => {
+				if (error || !result) {
+					reject(error ?? new Error("Cloudinary upload returned no result"));
+					return;
+				}
+				// Videos get a still-frame thumbnail by swapping the extension for
+				// .jpg on the same public_id — a cheap Cloudinary URL transform,
+				// no second upload needed.
+				const thumbnailUrl =
+					resourceType === "video"
+						? cloudinary.url(result.public_id, {
+								resource_type: "video",
+								format: "jpg",
+								transformation: [{ width: 400, crop: "limit" }],
+							})
+						: null;
+				resolve({
+					url: result.secure_url,
+					thumbnailUrl,
+					width: result.width ?? null,
+					height: result.height ?? null,
+					durationSeconds: result.duration ? Math.round(result.duration) : null,
+				});
+			},
+		);
+		stream.end(buffer);
+	});
+}

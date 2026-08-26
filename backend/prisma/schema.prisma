@@ -71,6 +71,23 @@ enum CrmConnectionStatus {
   disconnected
 }
 
+/**
+ * "dm" is the only kind Phase 1 creates. "group" is defined now so Phase 2
+ * (Link Internal Board group chats) is an additive change — no migration to
+ * widen this enum later.
+ */
+enum InternalConversationType {
+  dm
+  group
+}
+
+enum InternalAttachmentType {
+  image
+  video
+  audio
+  file
+}
+
 model Stage {
   id        String   @id @default(uuid())
   key       String   @unique
@@ -120,6 +137,12 @@ model User {
   crmIntegrations       CrmIntegration[]
   appSettingsUpdated    AppSetting[]
   sentSmsMessages       SmsMessage[]
+
+  // Link Internal Board (VA/Admin staff chat) — fully separate from the
+  // patient-SMS models above; no FK crosses between the two feature areas.
+  internalConversationsCreated InternalConversation[]            @relation("InternalConversationCreatedBy")
+  internalParticipations       InternalConversationParticipant[]
+  internalMessagesSent         InternalMessage[]
 
   createdByUser User?  @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   createdUsers  User[] @relation("UserCreatedBy")
@@ -479,4 +502,106 @@ model SmsCallLog {
   @@index([conversationId])
   @@index([createdAt])
   @@map("sms_call_logs")
+}
+
+// =============================================================================
+// Link Internal Board — internal staff (VA/Admin) chat.
+//
+// Deliberately separate from the SmsConversation/SmsMessage models above:
+// different feature, different audience (staff talking to each other, not
+// patient SMS), different lifecycle. No foreign key ever crosses between
+// them. Shares only generic infra (User, Pusher client, Cloudinary) with the
+// rest of the app, same as any two unrelated features would.
+// =============================================================================
+
+/**
+ * One row per conversation — a 1:1 DM in Phase 1, `type: group` reserved for
+ * Phase 2. `name`/`avatarUrl` are null for a DM (its "identity" is just the
+ * other participant); Phase 2 group chats set them.
+ */
+model InternalConversation {
+  id                 String                   @id @default(uuid())
+  type               InternalConversationType @default(dm)
+  name               String?
+  avatarUrl          String?                  @map("avatar_url")
+  createdById        String?                  @map("created_by")
+  lastMessageAt      DateTime?                @map("last_message_at")
+  lastMessagePreview String?                  @map("last_message_preview")
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  updatedAt          DateTime                 @default(now()) @updatedAt @map("updated_at")
+
+  createdByUser User?                             @relation("InternalConversationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  participants  InternalConversationParticipant[]
+  messages      InternalMessage[]
+
+  @@index([lastMessageAt])
+  @@map("internal_conversations")
+}
+
+/**
+ * Membership row — also carries `lastReadAt` so unread counts are a simple
+ * "messages after my lastReadAt" query, no separate read-receipt table
+ * needed for Phase 1.
+ */
+model InternalConversationParticipant {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  userId         String    @map("user_id")
+  lastReadAt     DateTime? @map("last_read_at")
+  joinedAt       DateTime  @default(now()) @map("joined_at")
+
+  conversation InternalConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@map("internal_conversation_participants")
+}
+
+/**
+ * A single chat message. `body` is nullable — a message can be attachment-only
+ * (e.g. just a photo, no caption), matching iMessage/WhatsApp conventions.
+ */
+model InternalMessage {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  senderId       String    @map("sender_id")
+  body           String?
+  editedAt       DateTime? @map("edited_at")
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  conversation InternalConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User                 @relation(fields: [senderId], references: [id])
+  attachments  InternalAttachment[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@map("internal_messages")
+}
+
+/**
+ * One row per uploaded file on a message. Media itself lives on Cloudinary
+ * (folder "ech-pipeline/internal-board") — only the resulting URL + display
+ * metadata is stored here, same "never store the binary ourselves" approach
+ * as everything else in this app that touches Cloudinary.
+ */
+model InternalAttachment {
+  id              String                 @id @default(uuid())
+  messageId       String                 @map("message_id")
+  type            InternalAttachmentType
+  url             String
+  thumbnailUrl    String?                @map("thumbnail_url")
+  fileName        String                 @map("file_name")
+  mimeType        String                 @map("mime_type")
+  sizeBytes       Int                    @map("size_bytes")
+  width           Int?
+  height          Int?
+  durationSeconds Int?                   @map("duration_seconds")
+  createdAt       DateTime               @default(now()) @map("created_at")
+
+  message InternalMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@map("internal_attachments")
 }

@@ -18,6 +18,7 @@ import {
   Settings,
   ShieldCheck,
   Wrench,
+  Link2,
 } from "lucide-react"
 import { ROUTES } from "@/constants"
 import { useAuth } from "@/hooks/auth/useAuth"
@@ -55,6 +56,7 @@ function useMoreItems(): MoreItem[] {
   const isAdmin = isAdminOrAbove(user?.role)
   const base = isAdmin ? ROUTES.ADMIN : ROUTES.DASHBOARD
   const items: MoreItem[] = [
+    { label: "Link Internal Board", icon: Link2, href: base.INTERNAL_MESSAGING },
     { label: "Workload", icon: CalendarDays, href: base.WORKLOAD },
     { label: "SOP Guide", icon: ScrollText, href: base.SOP },
     { label: "Import", icon: Upload, href: base.IMPORT },

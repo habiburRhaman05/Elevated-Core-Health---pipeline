@@ -49,9 +49,7 @@ export function authorizeChannel(socketId: string, channelName: string): { auth:
 	const authResponse = p.authorizeChannel(socketId, channelName);
 	// authorizeChannel returns a ChannelAuthResponse — extract the auth string
 	// for the frontend's Pusher client.
-	return typeof authResponse === "string"
-		? { auth: authResponse }
-		: (authResponse as { auth: string });
+	return typeof authResponse === "string" ? { auth: authResponse } : (authResponse as { auth: string });
 }
 
 /** Channel name for conversation-list-level updates (unread count, last message preview). */
@@ -99,5 +97,60 @@ export function notifyConversationUpdated(conversationId: string): void {
 		p.trigger(MESSAGING_CHANNEL, "conversation-updated", data);
 	} catch (err) {
 		logger.warn({ err, conversationId }, "Pusher trigger failed for conversation-updated");
+	}
+}
+
+// =============================================================================
+// Link Internal Board (VA/Admin staff chat) — reuses only the Pusher client
+// singleton above. Own channel namespace, own event payloads; never mixed
+// with the patient-SMS channels/events above.
+// =============================================================================
+
+/** Per-user inbox channel — conversation list updates (new thread, unread count, preview). */
+export function internalBoardChannel(userId: string): string {
+	return `private-internal-board-${userId}`;
+}
+
+/** Per-thread channel — new messages in one specific conversation. */
+export function internalConversationChannel(conversationId: string): string {
+	return `private-internal-conversation-${conversationId}`;
+}
+
+/**
+ * Notify a specific set of participants (their personal inbox channels) that
+ * a conversation has a new message or updated metadata. Unlike the SMS
+ * module's single shared MESSAGING_CHANNEL (every VA sees every patient
+ * thread), internal DMs are private — only the two participants should be
+ * pushed, so this fans out per-user rather than broadcasting to everyone.
+ */
+export function notifyInternalNewMessage(participantIds: string[], conversationId: string, messageId: string): void {
+	const p = getPusher();
+	if (!p) return;
+
+	const data = { conversationId, messageId };
+
+	try {
+		p.trigger(internalConversationChannel(conversationId), "new-message", data);
+		for (const userId of participantIds) {
+			p.trigger(internalBoardChannel(userId), "new-message", data);
+		}
+	} catch (err) {
+		logger.warn({ err, conversationId }, "Pusher trigger failed for internal-board new-message");
+	}
+}
+
+/** Same idea as notifyConversationUpdated, scoped to the DM's participants. */
+export function notifyInternalConversationUpdated(participantIds: string[], conversationId: string): void {
+	const p = getPusher();
+	if (!p) return;
+
+	const data = { conversationId };
+
+	try {
+		for (const userId of participantIds) {
+			p.trigger(internalBoardChannel(userId), "conversation-updated", data);
+		}
+	} catch (err) {
+		logger.warn({ err, conversationId }, "Pusher trigger failed for internal-board conversation-updated");
 	}
 }
