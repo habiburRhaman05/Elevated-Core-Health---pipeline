@@ -121,7 +121,7 @@ export default function AdminDashboardPage() {
       {isLoading && (
         <SplashLoader
           show={true}
-          message="Loading"
+          message=""
           subtitle="Setting up your workspace..."
         />
       )}

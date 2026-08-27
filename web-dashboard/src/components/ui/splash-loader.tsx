@@ -58,7 +58,7 @@ export function SplashLoader({
 
         {/* Text Content */}
         <div className="text-center space-y-3">
-          <h2 className="text-xl sm:text-2xl font-bold text-white">{message}</h2>
+          {/* <h2 className="text-xl sm:text-2xl font-bold text-white">{message}</h2> */}
           <p className="text-sm text-[#9CA3AF]">{subtitle}</p>
 
           {/* Loading dots animation */}
