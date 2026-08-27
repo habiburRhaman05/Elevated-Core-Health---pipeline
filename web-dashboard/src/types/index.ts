@@ -339,6 +339,8 @@ export interface PaginatedResponse<T> {
 export interface VaUser {
   id: string
   name: string
+  /** User role — 'va' or 'admin'. Used to filter assignable users in the UI. */
+  role?: string
   /** Optional — the API no longer returns emails on the VA list (Phase 3 exposure trim). */
   email?: string
 }

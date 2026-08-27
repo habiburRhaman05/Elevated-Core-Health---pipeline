@@ -10,13 +10,14 @@ export const usersController = {
 	// never needed client-side here (the profile screen reads the caller's own
 	// user object, and the admin user-management page uses /admin/users).
 	async listVas(_req: Request, res: Response): Promise<void> {
-		const vas = await prisma.user.findMany({
-			where: { role: "va" },
-			select: { id: true, name: true },
+		// Include admin so the UI can show admin as an assignable user
+		const users = await prisma.user.findMany({
+			where: { role: { in: ["va", "admin", "super_admin"] } },
+			select: { id: true, name: true, role: true },
 			orderBy: { name: "asc" },
 		});
 
-		handleServiceResponse(ServiceResponse.success("VA users retrieved.", vas), res);
+		handleServiceResponse(ServiceResponse.success("Users retrieved.", users), res);
 	},
 
 	/** All users (admin + VAs) — used for activity-log actor filters etc. */

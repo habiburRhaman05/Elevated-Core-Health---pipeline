@@ -203,21 +203,40 @@ async function resolveAutoAssign(
 	let assignedTo: string | null = null;
 	let assignmentMethod = "none";
 
-	const vas = await prisma.user.findMany({
-		where: { role: "va" },
-		select: { id: true, name: true },
+	// Fetch all users (VAs + admin + super_admin) so we can match practitionerName to admin too
+	const allUsers = await prisma.user.findMany({
+		where: { role: { in: ["va", "admin", "super_admin"] } },
+		select: { id: true, name: true, role: true },
 	});
+	const vas = allUsers.filter((u) => u.role === "va");
 
 	// 0. Explicit assignment (e.g. picked from a dropdown in the Add Patient form)
 	if (input.assignedTo) {
-		const explicitVa = vas.find((va) => va.id === input.assignedTo);
-		if (explicitVa) {
-			assignedTo = explicitVa.id;
+		const explicitUser = allUsers.find((u) => u.id === input.assignedTo);
+		if (explicitUser) {
+			assignedTo = explicitUser.id;
 			assignmentMethod = "explicit_selection";
 		}
 	}
 
-	// 1. If vaName provided in webhook, try to find and assign to that VA
+	// 1. If practitionerName provided, match by practitioner name (case-insensitive)
+	//    Donna → admin, Jude → Jude, others → fall through
+	if (!assignedTo && input.practitionerName && input.practitionerName.trim()) {
+		const pName = input.practitionerName.trim().toLowerCase();
+		const matched = allUsers.find((u) => {
+			const uName = u.name?.toLowerCase();
+			if (!uName) return false;
+			// Match the first name portion of the user against the practitioner name
+			const firstName = uName.split(" ")[0];
+			return pName.startsWith(firstName);
+		});
+		if (matched) {
+			assignedTo = matched.id;
+			assignmentMethod = `practitioner_name (${input.practitionerName.trim()})`;
+		}
+	}
+
+	// 2. If vaName provided in webhook, try to find and assign to that VA
 	if (!assignedTo && input.vaName && input.vaName.trim()) {
 		const namedVa = vas.find((va) => va.name?.toLowerCase().includes(input.vaName!.toLowerCase()));
 		if (namedVa) {
@@ -1222,8 +1241,11 @@ export const patientsService = {
 			}
 		}
 
-		// Auto-assign VA: explicit selection wins, then vaName from webhook, then appointment time
-		const { assignedTo, assignmentMethod } = await resolveAutoAssign(input, appointmentDatetime);
+		// Auto-assign: explicit selection → practitionerName match → vaName → appointment time
+		const { assignedTo, assignmentMethod } = await resolveAutoAssign(
+			{ ...input, practitionerName: input.practitionerName },
+			appointmentDatetime,
+		);
 
 		// Safely build paymentDetails JSON with webhook metadata
 		const webhookMetadata: Record<string, unknown> = {};
@@ -1277,7 +1299,7 @@ export const patientsService = {
 				paymentDetails: Object.keys(paymentDetails).length > 0 ? JSON.parse(JSON.stringify(paymentDetails)) : undefined,
 				copayAmount,
 				visitStatus: input.visitStatus ?? undefined,
-				source: "webhook",
+				source: "optimantra",
 				checklistState: {},
 				notes: input.practitionerName?.trim() ? `Practitioner: ${input.practitionerName.trim()}` : null,
 				assignedTo,
@@ -1311,8 +1333,8 @@ export const patientsService = {
 			action: "patient.create",
 			entityType: "patient",
 			entityId: patient.id,
-			newValue: { source: "webhook", platform: platformLabel, assignedTo, assignmentMethod },
-			message: `New patient auto-created from booking email (${platformLabel})${assignmentNote}`,
+			newValue: { source: "optimantra", platform: platformLabel, assignedTo, assignmentMethod },
+			message: `New patient auto-created from Optimantra intake (${platformLabel})${assignmentNote}`,
 			type: "auto",
 		});
 

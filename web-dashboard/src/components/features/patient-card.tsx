@@ -177,7 +177,7 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
   const visibleDefs = expanded ? stageDefs : stageDefs.slice(0, VISIBLE_ITEMS)
   const hiddenCount = stageDefs.length - visibleDefs.length
 
-  // VAs may only claim/assign themselves (roles table) — admins can assign any VA.
+  // Admin can assign any user (VAs + admin). VAs can only self-assign.
   const assignableVas = isAdmin
     ? vaList
     : vaList?.filter((v) => v.id === currentUser?.id)
@@ -217,7 +217,7 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
         ? { icon: User, label: "Unassigned", cls: "bg-lime-50 border-lime-200 text-lime-700" }
         : {
             icon: Globe,
-            label: patient.source === "webhook" ? "Website" : "Manual",
+            label: patient.source,
             cls: "bg-blue-50 border-blue-100 text-blue-600",
           }
   const BadgeIcon = headerBadge.icon
