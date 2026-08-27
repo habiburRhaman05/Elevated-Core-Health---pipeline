@@ -7,6 +7,7 @@ export const envSchema = z.object({
   NEXTAUTH_URL: z.string().url().optional(),
   NEXT_PUBLIC_PUSHER_KEY: z.string().optional(),
   NEXT_PUBLIC_PUSHER_CLUSTER: z.string().optional(),
+  NEXT_PUBLIC_WEB_SOCKET_URL:z.string()
 })
 
 export type Env = z.infer<typeof envSchema>
