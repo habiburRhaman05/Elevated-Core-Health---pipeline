@@ -51,7 +51,9 @@ function toPatientDto<T extends { firstName?: string | null; lastName?: string |
 	return { ...p, name: fullName(p) };
 }
 
-function toPatientListDto<T extends { firstName?: string | null; lastName?: string | null }>(list: T[]): Array<T & { name: string }> {
+function toPatientListDto<T extends { firstName?: string | null; lastName?: string | null }>(
+	list: T[],
+): Array<T & { name: string }> {
 	return list.map((p) => ({ ...p, name: fullName(p) }));
 }
 
@@ -168,13 +170,34 @@ function canEditPatient(
 }
 
 /**
+ * Loose, word-overlap name match — NOT exact-string equality. Optimantra's
+ * practitionerName can carry a title, suffix, or different word order than
+ * whatever's saved as the VA's display name (e.g. webhook "Jude Smith, PA-C"
+ * vs. a VA named "Jude - Lead"), so this strips punctuation and matches on
+ * any single shared word of 2+ letters (a first name is normally enough).
+ */
+function fuzzyNameMatch(candidate: string, targetName: string | null | undefined): boolean {
+	if (!targetName) return false;
+	const words = (s: string) =>
+		s
+			.toLowerCase()
+			.replace(/[^a-z\s]/g, " ")
+			.split(/\s+/)
+			.filter((w) => w.length > 1);
+	const candidateWords = words(candidate);
+	const targetWords = words(targetName);
+	return candidateWords.some((w) => targetWords.includes(w));
+}
+
+/**
  * Shared VA auto-assignment for newly created patients (used by both webhook
  * intake and the authenticated Add Patient form). Priority: explicit VA
- * selection → webhook vaName match → appointment-time rule (< 12 PM = Jude,
- * ≥ 12 PM = Amanda). If no rule matches, the patient stays unassigned.
+ * selection → webhook vaName match → webhook practitionerName match →
+ * appointment-time rule (< 12 PM = Jude, ≥ 12 PM = Amanda). If no rule
+ * matches, the patient stays unassigned.
  */
 async function resolveAutoAssign(
-	input: { assignedTo?: string | null; vaName?: string | null },
+	input: { assignedTo?: string | null; vaName?: string | null; practitionerName?: string | null },
 	appointmentDatetime: Date | null,
 ): Promise<{ assignedTo: string | null; assignmentMethod: string }> {
 	let assignedTo: string | null = null;
@@ -200,6 +223,19 @@ async function resolveAutoAssign(
 		if (namedVa) {
 			assignedTo = namedVa.id;
 			assignmentMethod = `webhook_va_name (${input.vaName})`;
+		}
+	}
+
+	// 1.5. If still unassigned, try the webhook's practitionerName against a
+	// VA's own name - fuzzy word-overlap, not an exact match (see
+	// fuzzyNameMatch's doc comment for why exact matching isn't reliable
+	// here). This is for clinics where a given practitioner's patients are
+	// always meant to land with a specific VA.
+	if (!assignedTo && input.practitionerName && input.practitionerName.trim()) {
+		const matchedVa = vas.find((va) => fuzzyNameMatch(input.practitionerName as string, va.name));
+		if (matchedVa) {
+			assignedTo = matchedVa.id;
+			assignmentMethod = `webhook_practitioner_name (${input.practitionerName})`;
 		}
 	}
 
@@ -692,7 +728,12 @@ export const patientsService = {
 					})
 				: null;
 			if (clearedFlag?.flaggedByUser?.email) {
-				await emailService.notifyFlagCleared(fullName(patient), user.name, input.clearReason, clearedFlag.flaggedByUser.email);
+				await emailService.notifyFlagCleared(
+					fullName(patient),
+					user.name,
+					input.clearReason,
+					clearedFlag.flaggedByUser.email,
+				);
 			}
 		} catch (err) {
 			logger.error({ err, patientId: id }, "Failed to send flag-cleared notification email");
@@ -1074,8 +1115,11 @@ export const patientsService = {
 		// The webhook sends: firstName, lastName, locationName, apptDate, apptStartTime,
 		// patientDOB, purchaseAmount, appointmentId, practitionerName, etc.
 		// We map these to the Patient schema fields.
-		
-		logger.info({ firstName: input.firstName, lastName: input.lastName, email: input.email, phone: input.phone }, "Webhook intake - processing patient data");
+
+		logger.info(
+			{ firstName: input.firstName, lastName: input.lastName, email: input.email, phone: input.phone },
+			"Webhook intake - processing patient data",
+		);
 
 		// Safely parse appointment datetime from separate fields if not provided as ISO
 		let appointmentDatetime: Date | null = null;
@@ -1086,17 +1130,34 @@ export const patientsService = {
 					appointmentDatetime = parsed;
 				}
 			} else if (input.apptDate && input.apptStartTime) {
-				// Combine apptDate (e.g. "Sat Aug 22 04:00:00 2026") + apptStartTime (e.g. "21:00")
-				const dateStr = `${input.apptDate} ${input.apptStartTime}`;
-				const parsed = new Date(dateStr);
-				if (!Number.isNaN(parsed.getTime())) {
-					appointmentDatetime = parsed;
+				// apptDate arrives as a FULL date+time string (e.g. "Sat Aug 22
+				// 04:00:00 2026") whose time portion is Optimantra's own
+				// placeholder, not the real appointment time - apptStartTime
+				// ("21:00") is the actual time. Naively concatenating the two
+				// strings (the old approach) produces something like
+				// "Sat Aug 22 04:00:00 2026 21:00", which `new Date(...)` can't
+				// parse at all - confirmed live, this silently dropped the
+				// appointment date on every webhook intake. Instead: parse
+				// apptDate for its calendar date only, then apply
+				// apptStartTime's hour/minute on top of that same date.
+				const dateOnly = new Date(input.apptDate);
+				const timeMatch = input.apptStartTime.match(/^(\d{1,2}):(\d{2})/);
+				if (!Number.isNaN(dateOnly.getTime()) && timeMatch) {
+					const combined = new Date(dateOnly);
+					combined.setHours(Number(timeMatch[1]), Number(timeMatch[2]), 0, 0);
+					appointmentDatetime = combined;
 				} else {
-					logger.warn({ apptDate: input.apptDate, apptStartTime: input.apptStartTime }, "Could not parse webhook appointment date fields");
+					logger.warn(
+						{ apptDate: input.apptDate, apptStartTime: input.apptStartTime },
+						"Could not parse webhook appointment date fields",
+					);
 				}
 			}
 		} catch (err) {
-			logger.warn({ err, apptDate: input.apptDate, apptStartTime: input.apptStartTime }, "Failed to parse appointment datetime from webhook");
+			logger.warn(
+				{ err, apptDate: input.apptDate, apptStartTime: input.apptStartTime },
+				"Failed to parse appointment datetime from webhook",
+			);
 		}
 
 		// Safely parse date of birth from patientDOB field (e.g. "2007-01-20")
@@ -1149,7 +1210,10 @@ export const patientsService = {
 				select: { id: true, firstName: true, lastName: true },
 			});
 			if (existingByPhone) {
-				logger.warn({ phone: input.phone, existingPatientId: existingByPhone.id }, "Duplicate phone detected, skipping intake");
+				logger.warn(
+					{ phone: input.phone, existingPatientId: existingByPhone.id },
+					"Duplicate phone detected, skipping intake",
+				);
 				return ServiceResponse.failure(
 					`A patient with this phone number already exists (${existingByPhone.firstName} ${existingByPhone.lastName ?? ""}). Intake skipped to avoid a duplicate record.`,
 					null,
@@ -1168,7 +1232,9 @@ export const patientsService = {
 		if (input.practitionerID) webhookMetadata.practitionerID = String(input.practitionerID).trim();
 		if (input.tag) webhookMetadata.tag = String(input.tag).trim();
 		if (input.status) webhookMetadata.bookingStatus = String(input.status).trim();
-		
+		if (input.apptEndTime) webhookMetadata.apptEndTime = String(input.apptEndTime).trim();
+		if (input.purchaseName) webhookMetadata.purchaseName = String(input.purchaseName).trim();
+
 		// Safely merge with any existing paymentDetails from input
 		let existingDetails: Record<string, unknown> = {};
 		try {
@@ -1218,21 +1284,24 @@ export const patientsService = {
 			},
 		});
 
-		logger.info({
-			patientId: patient.id,
-			firstName: patient.firstName,
-			lastName: patient.lastName,
-			email: patient.email,
-			phone: patient.phone,
-			location: patient.location,
-			dateOfBirth: patient.dateOfBirth,
-			stage: patient.stage,
-			appointmentDatetime: patient.appointmentDatetime,
-			bookingPlatform: patient.bookingPlatform,
-			copayAmount: patient.copayAmount,
-			source: patient.source,
-			assignedTo: patient.assignedTo,
-		}, "Webhook intake - patient created successfully");
+		logger.info(
+			{
+				patientId: patient.id,
+				firstName: patient.firstName,
+				lastName: patient.lastName,
+				email: patient.email,
+				phone: patient.phone,
+				location: patient.location,
+				dateOfBirth: patient.dateOfBirth,
+				stage: patient.stage,
+				appointmentDatetime: patient.appointmentDatetime,
+				bookingPlatform: patient.bookingPlatform,
+				copayAmount: patient.copayAmount,
+				source: patient.source,
+				assignedTo: patient.assignedTo,
+			},
+			"Webhook intake - patient created successfully",
+		);
 
 		const platformLabel = input.bookingPlatform ?? "email";
 		const assignmentNote = assignedTo ? ` - Auto-assigned via ${assignmentMethod}` : "";
@@ -1432,7 +1501,13 @@ export const patientsService = {
 				select: { email: true },
 			});
 			if (admin?.email && patient.email) {
-				await emailService.notifyAppointmentChanged(fullName(patient), patient.email, newDateTime, user.name, admin.email);
+				await emailService.notifyAppointmentChanged(
+					fullName(patient),
+					patient.email,
+					newDateTime,
+					user.name,
+					admin.email,
+				);
 			}
 		} catch (err) {
 			logger.error({ err, patientId: id }, "Failed to send appointment change notification emails");

@@ -7,6 +7,7 @@ const parsed = envSchema.safeParse({
   NEXTAUTH_URL: process.env.NEXTAUTH_URL,
   NEXT_PUBLIC_PUSHER_KEY: process.env.NEXT_PUBLIC_PUSHER_KEY,
   NEXT_PUBLIC_PUSHER_CLUSTER: process.env.NEXT_PUBLIC_PUSHER_CLUSTER,
+  NEXT_PUBLIC_WEB_SOCKET_URL:process.env.NEXT_PUBLIC_WEB_SOCKET_URL
 })
 
 if (!parsed.success) {
