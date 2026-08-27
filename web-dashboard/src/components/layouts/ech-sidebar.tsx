@@ -43,7 +43,7 @@ const VA_NAV = [
   ]},
   { section: "Operations", items: [
     { href: ROUTES.DASHBOARD.MESSAGES, icon: MessageSquare, label: "Messages", badgeKey: "unread" as const },
-    { href: ROUTES.DASHBOARD.INTERNAL_MESSAGING, icon: Link2, label: "Internal Communications", badgeKey: "internalUnread" as const },
+    { href: ROUTES.DASHBOARD.INTERNAL_MESSAGING, icon: MessageCirclePlus, label: "Internal Communications", badgeKey: "internalUnread" as const },
     { href: ROUTES.DASHBOARD.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.DASHBOARD.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.DASHBOARD.REPORTING, icon: BarChart3, label: "My Report" },
