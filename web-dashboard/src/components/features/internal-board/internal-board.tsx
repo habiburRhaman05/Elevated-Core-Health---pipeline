@@ -107,7 +107,7 @@ export function InternalBoard() {
             <Link2 className="w-3.5 h-3.5 text-white" strokeWidth={2.3} />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-bold text-[#111827] leading-tight truncate">Link Internal Board</p>
+            <p className="text-sm font-bold text-[#111827] leading-tight truncate">Elevated Core Health Staff</p>
             <span
               title={
                 realtimeStatus === "live"
