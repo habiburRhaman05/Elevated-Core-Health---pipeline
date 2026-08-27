@@ -26,6 +26,8 @@ import {
   NotebookText,
   MessageSquare,
   Link2,
+  MessageCircleCheck,
+  MessageCirclePlus,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ROUTES } from "@/constants"
@@ -58,7 +60,7 @@ const ADMIN_NAV = [
   ]},
   { section: "Operations", items: [
     { href: ROUTES.ADMIN.MESSAGES, icon: MessageSquare, label: "Messages", badgeKey: "unread" as const },
-    { href: ROUTES.ADMIN.INTERNAL_MESSAGING, icon: Link2, label: "Internal Communications", badgeKey: "internalUnread" as const },
+    { href: ROUTES.ADMIN.INTERNAL_MESSAGING, icon: MessageCirclePlus, label: "Internal Communications", badgeKey: "internalUnread" as const },
     { href: ROUTES.ADMIN.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.ADMIN.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.ADMIN.REPORTING, icon: BarChart3, label: "Reporting" },
