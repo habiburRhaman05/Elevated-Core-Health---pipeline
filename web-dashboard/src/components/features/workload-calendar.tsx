@@ -135,12 +135,19 @@ export function WorkloadCalendar() {
       filtered.map((p) => {
         const color = stageColor(p.stage, stageOrder)
         const startDate = new Date(p.appointmentDatetime as string)
-        const endDate = new Date(startDate.getTime() + 60 * 60 * 1000) // 1 hour appointment
+        // Use 30-minute duration (doesn't cross midnight for most appointments)
+        const endDate = new Date(startDate.getTime() + 30 * 60 * 1000)
+
+        // If end time crosses into next day, only show on the appointment day
+        const startDay = startDate.toDateString()
+        const endDay = endDate.toDateString()
+
         return {
           id: p.id,
           title: p.name,
           start: p.appointmentDatetime as string,
-          end: endDate.toISOString(),
+          // Only set end if it doesn't cross midnight
+          ...(startDay === endDay && { end: endDate.toISOString() }),
           backgroundColor: color.bg,
           borderColor: color.bg,
           textColor: color.text,
@@ -154,12 +161,10 @@ export function WorkloadCalendar() {
     () =>
       filtered.map((p) => {
         const startDate = new Date(p.appointmentDatetime as string)
-        const endDate = new Date(startDate.getTime() + 60 * 60 * 1000) // 1 hour appointment
         return {
           id: p.id,
           title: p.name,
           start: startDate,
-          end: endDate,
           color: stageColor(p.stage, stageOrder),
           patient: p,
         }
