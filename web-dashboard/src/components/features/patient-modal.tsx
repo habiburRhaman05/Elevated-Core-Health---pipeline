@@ -766,7 +766,10 @@ const isExpired = () => {
 
   const sopItems = patient ? STAGE_SOPs[patient.stage] || [] : []
 
-  const assignableVas = vaList?.filter((v) => v.id !== user?.id) ?? []
+  // Admin can assign any user (VAs + admin). VAs can only self-assign.
+  const assignableVas = isAdmin
+    ? (vaList ?? [])
+    : vaList?.filter((v) => v.id === user?.id) ?? []
 
   if (!open) return null
 
