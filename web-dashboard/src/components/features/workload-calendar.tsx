@@ -134,10 +134,13 @@ export function WorkloadCalendar() {
     () =>
       filtered.map((p) => {
         const color = stageColor(p.stage, stageOrder)
+        const startDate = new Date(p.appointmentDatetime as string)
+        const endDate = new Date(startDate.getTime() + 60 * 60 * 1000) // 1 hour appointment
         return {
           id: p.id,
           title: p.name,
           start: p.appointmentDatetime as string,
+          end: endDate.toISOString(),
           backgroundColor: color.bg,
           borderColor: color.bg,
           textColor: color.text,
@@ -149,13 +152,18 @@ export function WorkloadCalendar() {
 
   const gridEvents = useMemo<TimeGridEvent[]>(
     () =>
-      filtered.map((p) => ({
-        id: p.id,
-        title: p.name,
-        start: new Date(p.appointmentDatetime as string),
-        color: stageColor(p.stage, stageOrder),
-        patient: p,
-      })),
+      filtered.map((p) => {
+        const startDate = new Date(p.appointmentDatetime as string)
+        const endDate = new Date(startDate.getTime() + 60 * 60 * 1000) // 1 hour appointment
+        return {
+          id: p.id,
+          title: p.name,
+          start: startDate,
+          end: endDate,
+          color: stageColor(p.stage, stageOrder),
+          patient: p,
+        }
+      }),
     [filtered, stageOrder],
   )
 
