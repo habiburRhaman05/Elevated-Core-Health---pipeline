@@ -436,6 +436,11 @@ button{
   cursor: pointer;
 }
 
+.fc-theme-standard .fc-popover {
+    background: #ffffff;
+    border: 1px solid var(--fc-border-color);
+}
+
 /* ============================================================
    Premium Toasts (sonner) - Elevated Core Health branding
    ============================================================ */
@@ -566,6 +571,8 @@ button{
   color: #036638 !important;
   transition: all 0.2s ease;
 }
+
+
 
 /* Sonner v2 anchors the close button at the card's top-left CORNER with a
    -35% translate, which this card's overflow:hidden clips — leaving the cross
