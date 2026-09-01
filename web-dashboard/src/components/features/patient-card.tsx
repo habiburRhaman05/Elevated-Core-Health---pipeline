@@ -151,6 +151,9 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
   const { order: stageOrder, byKey: stageByKey } = useStageMeta()
   const isFinalStage = stageByKey.get(patient.stage)?.isFinal ?? false
   const stale = !isFinalStage && isStale(patient.updatedAt)
+  // Klarity's appointment.canceled webhook (and the admin-only manual cancel)
+  // both set this — struck through so a cancelled slot never reads like a live one.
+  const isCancelled = patient.status === "cancelled"
   const currentIdx = stageOrder.indexOf(patient.stage)
   const canAdvance = currentIdx < stageOrder.length - 1
   const canRetreat = currentIdx > 0
@@ -302,9 +305,14 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
             )}
             <span className="w-px h-3.5 bg-[#E5E7EB]" />
             <span className="inline-flex items-center gap-1.5 text-[#6B7280]">
-              <Calendar className="w-3.5 h-3.5 text-[#9CA3AF]" />
+              <Calendar className={cn("w-3.5 h-3.5", isCancelled ? "text-red-500" : "text-[#9CA3AF]")} />
               {patient.appointmentDatetime ? (
-                <span className="font-medium text-[#374151]">
+                <span
+                  className={cn(
+                    "font-medium",
+                    isCancelled ? "text-red-400 line-through decoration-2" : "text-[#374151]",
+                  )}
+                >
                   {new Date(patient.appointmentDatetime).toLocaleString("en-US", {
                     month: "short",
                     day: "numeric",
@@ -314,6 +322,9 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
                 </span>
               ) : (
                 "No appointment"
+              )}
+              {isCancelled && (
+                <span className="text-[10px] font-bold uppercase tracking-wide text-red-600">Cancelled</span>
               )}
             </span>
           </div>

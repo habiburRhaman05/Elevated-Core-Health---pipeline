@@ -1,3 +1,17 @@
+
+oky got it .
+
+now here is my final endpoint and bearer token value
+
+https://elevated-core-health-pipeline-byb6.vercel.app/api/patients/intake/klarity
+
+and this my bearer key - "Bearer wwre2543tetewr3543r4werwer634266" use this exact bearer key oky .
+now setup the api endpoints . but before start let me know nned anyhtink else?
+polling - 5 minutes
+events: new, rescheduled, canceled
+mode: test first
+start test setup ,
+
 // New booking payload 
 
 {
