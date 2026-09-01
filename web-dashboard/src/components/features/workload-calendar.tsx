@@ -26,6 +26,7 @@ import {
 import { addDays, endOfWeek, format, startOfWeek } from "date-fns"
 import { usePatients, useListVas } from "@/hooks/query/usePatients"
 import { useStageMeta } from "@/hooks/query/useStages"
+import { formatClinicDate, formatClinicTime, toClinicNaiveIsoString, toClinicWallClock } from "@/lib/clinic-time"
 import {
   Select,
   SelectContent,
@@ -134,20 +135,30 @@ export function WorkloadCalendar() {
     () =>
       filtered.map((p) => {
         const color = stageColor(p.stage, stageOrder)
-        const startDate = new Date(p.appointmentDatetime as string)
-        // Use 30-minute duration (doesn't cross midnight for most appointments)
-        const endDate = new Date(startDate.getTime() + 30 * 60 * 1000)
+        const startInstant = new Date(p.appointmentDatetime as string)
+        // A real appointment.endAt (from Klarity) is used verbatim when present;
+        // otherwise fall back to a 30-minute default slot. Either way, the value
+        // fed to FullCalendar below is converted to the CLINIC's wall clock, not
+        // the viewer's — see toClinicNaiveIsoString's doc comment for why.
+        const endInstant = p.appointmentEndDatetime
+          ? new Date(p.appointmentEndDatetime)
+          : new Date(startInstant.getTime() + 30 * 60 * 1000)
 
-        // If end time crosses into next day, only show on the appointment day
-        const startDay = startDate.toDateString()
-        const endDay = endDate.toDateString()
+        // FullCalendar buckets a timed event onto whichever calendar day its
+        // "start" naive string falls on. A naive string carries no zone info,
+        // so this comparison must be done on the CLINIC's wall-clock date parts
+        // — comparing raw UTC instants here would reintroduce the exact
+        // wrong-day bug this fix exists to remove.
+        const startDay = toClinicNaiveIsoString(startInstant).slice(0, 10)
+        const endDay = toClinicNaiveIsoString(endInstant).slice(0, 10)
 
         return {
           id: p.id,
           title: p.name,
-          start: p.appointmentDatetime as string,
-          // Only set end if it doesn't cross midnight
-          ...(startDay === endDay && { end: endDate.toISOString() }),
+          start: toClinicNaiveIsoString(startInstant),
+          // Only set end if it doesn't cross into the next clinic-local day —
+          // FullCalendar would otherwise draw the event spanning both days.
+          ...(startDay === endDay && { end: toClinicNaiveIsoString(endInstant) }),
           backgroundColor: color.bg,
           borderColor: color.bg,
           textColor: color.text,
@@ -160,7 +171,10 @@ export function WorkloadCalendar() {
   const gridEvents = useMemo<TimeGridEvent[]>(
     () =>
       filtered.map((p) => {
-        const startDate = new Date(p.appointmentDatetime as string)
+        // Converted once here so every consumer downstream (hour bucketing,
+        // "h:mm a" display) reads the CLINIC's wall-clock hour, not whatever
+        // hour that UTC instant happens to be on the viewer's own machine.
+        const startDate = toClinicWallClock(new Date(p.appointmentDatetime as string))
         return {
           id: p.id,
           title: p.name,
@@ -286,8 +300,8 @@ export function WorkloadCalendar() {
       const dt = p.appointmentDatetime ? new Date(p.appointmentDatetime) : null
       rows.push([
         p.name,
-        dt ? dt.toLocaleDateString("en-US") : "",
-        dt ? dt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "",
+        dt ? formatClinicDate(dt) : "",
+        dt ? formatClinicTime(dt) : "",
         p.assignedUser?.name ?? "Unassigned",
         stageLabels[p.stage] ?? p.stage,
         p.status,
@@ -325,6 +339,10 @@ export function WorkloadCalendar() {
   const renderEventContent = (arg: EventContentArg) => {
     const patient = arg.event.extendedProps.patient as Patient
     const isMonth = arg.view.type === "dayGridMonth"
+    // NOT formatClinicTime here on purpose: FullCalendar's own event.start is
+    // already the clinic's wall-clock time, disguised as a naive local value
+    // (see the `events` useMemo above / toClinicNaiveIsoString) — forcing
+    // timeZone: CLINIC_TIMEZONE on top of it would shift it a second time.
     const time = arg.event.start
       ? new Date(arg.event.start).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
       : ""

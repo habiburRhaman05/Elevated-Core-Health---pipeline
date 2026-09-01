@@ -6,6 +6,7 @@ import { useChecklistItems } from "@/hooks/query/usePatients"
 import type { Patient, PatientStage } from "@/types"
 import { cn } from "@/lib/utils"
 import { getStageColor } from "@/lib/stage-colors"
+import { formatClinicDate } from "@/lib/clinic-time"
 
 interface PatientListViewProps {
   /** Already-filtered patients, shown across all stages in the list. */
@@ -237,11 +238,7 @@ function PatientListRow({
 
 function formatAppointment(datetime: string): string {
   try {
-    return new Date(datetime).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })
+    return formatClinicDate(new Date(datetime), { month: "short", day: "numeric", year: "numeric" })
   } catch {
     return datetime
   }

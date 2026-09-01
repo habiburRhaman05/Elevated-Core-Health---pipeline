@@ -53,6 +53,17 @@ export function usePatient(id: string) {
   })
 }
 
+/** Backs the patient modal's Appointment History tab. Only fetches once that
+ *  tab is actually opened (via `enabled`) — same lazy pattern as the modal's
+ *  other secondary tabs. */
+export function useAppointmentHistory(id: string, enabled = true) {
+  return useQuery({
+    queryKey: QUERY_KEYS.PATIENTS.APPOINTMENT_HISTORY(id),
+    queryFn: () => PatientsService.getAppointmentHistory(id),
+    enabled: !!id && enabled,
+  })
+}
+
 export function useMoveStage() {
   const qc = useQueryClient()
   return useMutation({

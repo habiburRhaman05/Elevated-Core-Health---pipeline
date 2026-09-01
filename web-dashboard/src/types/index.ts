@@ -122,7 +122,13 @@ export interface Patient {
   cancelledByUser?: Pick<User, "id" | "name"> | null
   source: string
   bookingPlatform?: string | null
+  // "Next appointment" snapshot, recomputed server-side from AppointmentHistory
+  // after every booking/reschedule/cancel — always the soonest upcoming one, or
+  // the most recent past one if nothing is upcoming. See AppointmentHistoryEntry
+  // for the full per-appointment record (patients created before that feature
+  // shipped have this snapshot but no history rows).
   appointmentDatetime?: string | null
+  appointmentEndDatetime?: string | null
   paymentMethod?: string | null
   insuranceProvider?: string | null
   paymentDetails?: Record<string, unknown> | null
@@ -138,6 +144,36 @@ export interface Patient {
   updatedAt: string
   createdAt: string
   activityLogs?: ActivityLog[]
+}
+
+export type AppointmentEventStatus = "scheduled" | "rescheduled" | "canceled" | "no_show" | "completed"
+
+/**
+ * One booking's full record — a patient can have more than one of these over
+ * time (a follow-up, a re-book after a no-show, ...). Append-only on the
+ * backend: a reschedule/cancel/no-show/completed event updates the SAME row
+ * (matched by externalAppointmentId), a genuinely new booking gets its own row.
+ * Patient.appointmentDatetime is a denormalized "next upcoming" snapshot
+ * derived from these — this array is the full per-appointment detail behind it.
+ */
+export interface AppointmentHistoryEntry {
+  id: string
+  patientId: string
+  appointmentDatetime: string
+  appointmentEndDatetime?: string | null
+  /** What the date/time was immediately before the most recent reschedule — null until the first one. */
+  previousDatetime?: string | null
+  status: AppointmentEventStatus
+  externalAppointmentId?: string | null
+  source: string
+  lastEventType?: string | null
+  providerName?: string | null
+  /** Who is running/hosting this specific appointment. Optional — not sent by Klarity today. */
+  hostName?: string | null
+  serviceType?: string | null
+  reason?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export type ActivityCategory =

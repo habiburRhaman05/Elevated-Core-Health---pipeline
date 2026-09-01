@@ -30,6 +30,15 @@ export const patientsController = {
 		handleServiceResponse(serviceResponse, res);
 	},
 
+	async getAppointmentHistory(req: Request, res: Response): Promise<void> {
+		if (!req.user) {
+			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, 401), res);
+			return;
+		}
+		const serviceResponse = await patientsService.getAppointmentHistory(paramId(req), req.user);
+		handleServiceResponse(serviceResponse, res);
+	},
+
 	async moveStage(req: Request, res: Response): Promise<void> {
 		if (!req.user) {
 			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, 401), res);

@@ -122,6 +122,7 @@ export const QUERY_KEYS = {
     ALL: ["patients"] as const,
     DETAIL: (id: string) => ["patients", id] as const,
     CHECKLIST_ITEMS: ["checklist-items"] as const,
+    APPOINTMENT_HISTORY: (id: string) => ["patients", id, "appointment-history"] as const,
   },
   ACTIVITY_LOG: {
     // Prefix key — invalidating this refreshes every activity-log query

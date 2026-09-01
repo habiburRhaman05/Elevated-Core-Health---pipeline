@@ -19,6 +19,7 @@ import {
   Lock,
 } from "lucide-react"
 import { cn, getInitials } from "@/lib/utils"
+import { formatClinicDateTime } from "@/lib/clinic-time"
 import { STALE_HOURS } from "@/constants"
 import { useChecklistItems, useListVas, useAssignPatient } from "@/hooks/query/usePatients"
 import { useStageMeta } from "@/hooks/query/useStages"
@@ -313,7 +314,7 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
                     isCancelled ? "text-red-400 line-through decoration-2" : "text-[#374151]",
                   )}
                 >
-                  {new Date(patient.appointmentDatetime).toLocaleString("en-US", {
+                  {formatClinicDateTime(new Date(patient.appointmentDatetime), {
                     month: "short",
                     day: "numeric",
                     hour: "numeric",

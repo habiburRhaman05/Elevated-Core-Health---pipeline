@@ -1,6 +1,6 @@
 import axiosInstance from "@/lib/axios"
 import { API_ENDPOINTS } from "@/constants"
-import type { ApiResponse, Patient, ChecklistItemDef, VaUser } from "@/types"
+import type { ApiResponse, AppointmentHistoryEntry, Patient, ChecklistItemDef, VaUser } from "@/types"
 
 export const PatientsService = {
   async list(stage?: string): Promise<Patient[]> {
@@ -15,6 +15,16 @@ export const PatientsService = {
   async getById(id: string): Promise<Patient> {
     const { data } = await axiosInstance.get<ApiResponse<Patient>>(
       `${API_ENDPOINTS.PATIENTS}/${id}`,
+    )
+    return data.data
+  },
+
+  /** Full appointment history for the modal's Appointment History tab. Empty
+   *  array for a patient with no bookings tracked yet (nothing before this
+   *  feature shipped has any rows) — never a 404 for that case. */
+  async getAppointmentHistory(id: string): Promise<AppointmentHistoryEntry[]> {
+    const { data } = await axiosInstance.get<ApiResponse<AppointmentHistoryEntry[]>>(
+      `${API_ENDPOINTS.PATIENTS}/${id}/appointment-history`,
     )
     return data.data
   },

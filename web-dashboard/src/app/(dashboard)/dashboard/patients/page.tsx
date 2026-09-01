@@ -7,6 +7,7 @@ import { useStageMeta } from "@/hooks/query/useStages"
 import { PatientModal } from "@/components/features/patient-modal"
 import { Loader2, Search, Users as UsersIcon, UserPlus, CheckCircle2, Phone, Mail, MapPin, Lock, Flag, Calendar } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { formatClinicDate } from "@/lib/clinic-time"
 
 type Filter = "all" | "mine" | "added"
 
@@ -174,7 +175,7 @@ export default function VAPatientsPage() {
                 {patient.appointmentDatetime && (
                   <span className="flex items-center gap-1 text-[11px] text-[#6B7280]">
                     <Calendar className="w-3 h-3" />
-                    {new Date(patient.appointmentDatetime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    {formatClinicDate(new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" })}
                   </span>
                 )}
                 <span className="ml-auto text-[11px] text-[#9CA3AF]">

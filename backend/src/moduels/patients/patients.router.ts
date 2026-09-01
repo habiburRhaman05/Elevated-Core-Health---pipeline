@@ -106,6 +106,7 @@ patientsRouter.get("/", patientsController.list);
 patientsRouter.post("/", validateRequest(CreatePatientSchema), patientsController.create);
 patientsRouter.get("/checklist-items", patientsController.listChecklistItems);
 patientsRouter.get("/:id", patientsController.getById);
+patientsRouter.get("/:id/appointment-history", patientsController.getAppointmentHistory);
 patientsRouter.patch("/:id/stage", validateRequest(StageMoveSchema), patientsController.moveStage);
 // Reassigning a patient to an arbitrary user is admin/super_admin only (task.md §17: "Reassign patients" — VA: No).
 // A VA claiming an unassigned patient for themselves is a separate, narrower action — see POST /:id/claim below.

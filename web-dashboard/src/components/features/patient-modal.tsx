@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react"
 
-import type { Patient, PatientFlag, PatientStage } from "@/types"
+import type { AppointmentEventStatus, Patient, PatientFlag, PatientStage } from "@/types"
 import { ROLES, STALE_HOURS } from "@/constants"
 import { useStageMeta } from "@/hooks/query/useStages"
 import {
@@ -69,6 +69,7 @@ import {
   useUnlockPatient,
   useUpdatePatientStatus,
   useUpdateAppointment,
+  useAppointmentHistory,
 } from "@/hooks/query/usePatients"
 import { usePatient } from "@/hooks/query/usePatients"
 import { useActivityLog } from "@/hooks/query/useActivityLog"
@@ -87,6 +88,13 @@ import { EligibilityCheckDialog } from "./eligibility-check-dialog"
 import { PAYMENT_METHOD_OPTIONS, INSURANCE_PROVIDER_OPTIONS, VISIT_STATUS_OPTIONS, VOB_LABELS } from "@/lib/patient-options"
 import { getStageColor } from "@/lib/stage-colors"
 import { actionMeta, fullDateTime } from "@/lib/activity-meta"
+import {
+  formatClinicDate,
+  formatClinicDateTime,
+  formatClinicTime,
+  fromClinicWallClockInput,
+  toClinicDatetimeLocalValue,
+} from "@/lib/clinic-time"
 import { cn, getInitials } from "@/lib/utils"
 import { isValidUsPhone, formatUsPhone } from "@/lib/us-phone"
 import { toast } from "sonner"
@@ -223,7 +231,16 @@ function splitPatientName(fullName: string): { firstName: string; lastName: stri
   return { firstName: parts[0], lastName: parts.slice(1).join(" ") }
 }
 
-type TabKey = "overview" | "contact" | "eligibility" | "checklist" | "flags" | "messages" | "activity" | "notes"
+type TabKey =
+  | "overview"
+  | "contact"
+  | "eligibility"
+  | "checklist"
+  | "flags"
+  | "messages"
+  | "activity"
+  | "notes"
+  | "appointmentHistory"
 
 // Small donut/ring progress indicator used in the Overview → SOP card.
 function ProgressRing({ percent, label, sublabel }: { percent: number; label: string; sublabel: string }) {
@@ -390,6 +407,12 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   const { data: vaList } = useListVas()
 
   const [activeTab, setActiveTab] = useState<TabKey>("overview")
+  // Lazy — only fetched once the tab is actually opened, same as the rest of
+  // the modal's secondary data.
+  const { data: appointmentHistory, isLoading: isLoadingAppointmentHistory } = useAppointmentHistory(
+    patientId || "",
+    activeTab === "appointmentHistory",
+  )
   const [showMenu, setShowMenu] = useState(false)
   const [menuPending, setMenuPending] = useState<"reactivate" | "unlock" | "lock" | null>(null)
   const [newNoteText, setNewNoteText] = useState("")
@@ -515,7 +538,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
     setDeletingNoteId(null)
     if (patient?.appointmentDatetime) {
       const dt = new Date(patient.appointmentDatetime)
-      setNewAppointmentDatetime(toLocalDatetimeLocal(dt))
+      setNewAppointmentDatetime(toClinicDatetimeLocalValue(dt))
     } else {
       setNewAppointmentDatetime("")
     }
@@ -537,7 +560,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
 
   useEffect(() => {
     if (patient?.appointmentDatetime) {
-      setNewAppointmentDatetime(toLocalDatetimeLocal(new Date(patient.appointmentDatetime)))
+      setNewAppointmentDatetime(toClinicDatetimeLocalValue(new Date(patient.appointmentDatetime)))
     } else {
       setNewAppointmentDatetime("")
     }
@@ -674,12 +697,16 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
 
   const handleUpdateAppointment = async () => {
     if (!patient || !newAppointmentDatetime.trim()) return
-    if (new Date(newAppointmentDatetime).getTime() < getMinAppointmentDate().getTime()) {
+    // The picker's digits mean "this time, in the CLINIC's timezone" — not
+    // whatever timezone the VA's own computer happens to be set to. Converting
+    // with plain `new Date(...)` here would silently store the wrong instant
+    // for any VA not physically in the clinic's own timezone.
+    const realInstant = fromClinicWallClockInput(newAppointmentDatetime)
+    if (realInstant.getTime() < getMinAppointmentDate().getTime()) {
       toast.error("Appointment date cannot be in the past")
       return
     }
-    const isoDatetime = new Date(newAppointmentDatetime).toISOString()
-    await updateAppointment.mutateAsync({ id: patient.id, appointmentDatetime: isoDatetime })
+    await updateAppointment.mutateAsync({ id: patient.id, appointmentDatetime: realInstant.toISOString() })
     setEditingAppointment(false)
   }
 
@@ -773,6 +800,106 @@ const isExpired = () => {
 
   if (!open) return null
 
+  const APPOINTMENT_STATUS_META: Record<
+    AppointmentEventStatus,
+    { label: string; icon: typeof CheckCircle; cls: string }
+  > = {
+    scheduled: { label: "Scheduled", icon: Calendar, cls: "bg-blue-50 text-blue-600 border-blue-100" },
+    rescheduled: { label: "Rescheduled", icon: RefreshCw, cls: "bg-amber-50 text-amber-600 border-amber-200" },
+    canceled: { label: "Cancelled", icon: XCircle, cls: "bg-red-50 text-red-600 border-red-200" },
+    no_show: { label: "No-show", icon: AlertTriangle, cls: "bg-orange-50 text-orange-600 border-orange-200" },
+    completed: { label: "Completed", icon: CheckCircle, cls: "bg-green-50 text-green-600 border-green-200" },
+  }
+
+  // Shared by both the desktop and mobile layouts below — same pattern as the
+  // rest of this modal (each layout renders its own tab bodies), but this one
+  // is a function instead of inline JSX so the two copies can't drift apart.
+  function renderAppointmentHistoryTab() {
+    return (
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm min-h-full">
+        <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide flex items-center gap-2 mb-4">
+          <Calendar className="w-5 h-5 text-indigo-400" /> Appointment History
+        </h4>
+        {isLoadingAppointmentHistory ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="w-5 h-5 text-[#036638] animate-spin" />
+          </div>
+        ) : appointmentHistory && appointmentHistory.length > 0 ? (
+          <div className="space-y-2.5">
+            {appointmentHistory.map((appt) => {
+              const meta = APPOINTMENT_STATUS_META[appt.status]
+              const StatusIcon = meta.icon
+              return (
+                <div key={appt.id} className="p-3.5 rounded-xl border border-gray-100 hover:bg-[#EBF7EC]/20 transition-colors">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-[#9CA3AF]" />
+                      <span
+                        className={cn(
+                          "font-semibold text-sm text-[#1A1B1E]",
+                          appt.status === "canceled" && "line-through decoration-2 text-red-600",
+                        )}
+                      >
+                        {formatClinicDateTime(new Date(appt.appointmentDatetime), { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border",
+                        meta.cls,
+                      )}
+                    >
+                      <StatusIcon className="w-3 h-3" />
+                      {meta.label}
+                    </span>
+                  </div>
+
+                  {appt.previousDatetime && (
+                    <p className="text-xs text-[#6B7280] mt-1.5 ml-6">
+                      Moved from <span className="line-through">{formatClinicDateTime(new Date(appt.previousDatetime), { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                    </p>
+                  )}
+
+                  {(appt.providerName || appt.hostName || appt.serviceType) && (
+                    <div className="flex items-center gap-3 flex-wrap mt-2 ml-6 text-xs text-[#6B7280]">
+                      {appt.providerName && (
+                        <span className="flex items-center gap-1">
+                          <User className="w-3 h-3" /> {appt.providerName}
+                        </span>
+                      )}
+                      {appt.hostName && (
+                        <span className="flex items-center gap-1">
+                          <UserCheck className="w-3 h-3" /> Host: {appt.hostName}
+                        </span>
+                      )}
+                      {appt.serviceType && (
+                        <span className="px-1.5 py-0.5 rounded bg-gray-50 border border-gray-100">{appt.serviceType}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {appt.reason && <p className="text-xs text-[#374151] mt-2 ml-6 leading-relaxed">{appt.reason}</p>}
+
+                  <p className="text-[10px] text-[#9CA3AF] mt-2 ml-6 uppercase tracking-wide">
+                    via {appt.source}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          // Fallback for every patient created before this feature shipped, or
+          // whose only appointment came from a source that doesn't write
+          // history rows yet — never invented data, just an honest empty state.
+          <div className="text-center py-10">
+            <Calendar className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+            <p className="text-sm text-gray-400 italic">No appointment history available</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // Both layouts share the same 4 tabs (desktop & mobile) — no separate
   // Checklist tab.
   const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
@@ -783,6 +910,7 @@ const isExpired = () => {
     { key: "messages", label: "Messages", icon: <Phone className="w-4 h-4" /> },
     { key: "activity", label: "Activity Log", icon: <Clock className="w-4 h-4" /> },
     { key: "notes", label: "Notes", icon: <MessageSquare className="w-4 h-4" /> },
+    { key: "appointmentHistory", label: "Appointment History", icon: <Calendar className="w-4 h-4" /> },
   ]
 
   return (
@@ -1056,7 +1184,7 @@ const isExpired = () => {
                         <button
                           onClick={() => {
                             setEditingAppointment(false)
-                            if (patient.appointmentDatetime) setNewAppointmentDatetime(toLocalDatetimeLocal(new Date(patient.appointmentDatetime)))
+                            if (patient.appointmentDatetime) setNewAppointmentDatetime(toClinicDatetimeLocalValue(new Date(patient.appointmentDatetime)))
                             else setNewAppointmentDatetime("")
                           }}
                           className="px-2.5 py-1 text-[11px] font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
@@ -1069,10 +1197,10 @@ const isExpired = () => {
                     <>
                       {patient.appointmentDatetime ? (
                         <>
-                          {new Date(patient.appointmentDatetime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                          {formatClinicDate(new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" })}
                           <br />
                           <span className="font-semibold text-emerald-600">
-                            {new Date(patient.appointmentDatetime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                            {formatClinicTime(new Date(patient.appointmentDatetime))}
                           </span>
                         </>
                       ) : (
@@ -1993,6 +2121,7 @@ const isExpired = () => {
                         </div>
                       </div>
                     )}
+                    {activeTab === "appointmentHistory" && renderAppointmentHistoryTab()}
                   </div>
                 </div>
               </div>
@@ -2379,16 +2508,16 @@ const isExpired = () => {
                     <DateTimePicker compact minDate={getMinAppointmentDate()} value={newAppointmentDatetime ? new Date(newAppointmentDatetime).toISOString() : ""} onChange={(iso) => setNewAppointmentDatetime(toLocalDatetimeLocal(new Date(iso)))} />
                     <div className="flex gap-1">
                       <button onClick={handleUpdateAppointment} disabled={updateAppointment.isPending || !newAppointmentDatetime.trim()} className="flex-1 text-[10px] font-semibold py-1 rounded bg-emerald-600 text-white">Save</button>
-                      <button onClick={() => { setEditingAppointment(false); if (patient.appointmentDatetime) setNewAppointmentDatetime(toLocalDatetimeLocal(new Date(patient.appointmentDatetime))); else setNewAppointmentDatetime(""); }} className="px-2 py-1 text-[10px] font-medium rounded border border-gray-200 text-gray-600">Cancel</button>
+                      <button onClick={() => { setEditingAppointment(false); if (patient.appointmentDatetime) setNewAppointmentDatetime(toClinicDatetimeLocalValue(new Date(patient.appointmentDatetime))); else setNewAppointmentDatetime(""); }} className="px-2 py-1 text-[10px] font-medium rounded border border-gray-200 text-gray-600">Cancel</button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between gap-1.5">
                     <div className="flex flex-col min-w-0">
                       <p className="text-xs font-bold text-gray-800 truncate">
-                        {patient.appointmentDatetime ? new Date(patient.appointmentDatetime).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Not scheduled"}
+                        {patient.appointmentDatetime ? formatClinicDate(new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" }) : "Not scheduled"}
                       </p>
-                      {patient.appointmentDatetime && <p className="text-[10px] font-medium text-emerald-600">{new Date(patient.appointmentDatetime).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</p>}
+                      {patient.appointmentDatetime && <p className="text-[10px] font-medium text-emerald-600">{formatClinicTime(new Date(patient.appointmentDatetime))}</p>}
                     </div>
                     <button onClick={() => setEditingAppointment(true)} className="p-1 rounded hover:bg-emerald-50 text-emerald-500"><Pencil className="w-3 h-3" /></button>
                   </div>
@@ -2960,6 +3089,7 @@ const isExpired = () => {
                     </div>
                   </div>
                 )}
+                {activeTab === "appointmentHistory" && renderAppointmentHistoryTab()}
               </div>
             </div>
 

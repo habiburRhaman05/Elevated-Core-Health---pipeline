@@ -318,7 +318,7 @@ function parseInstant(value: string | null | undefined): Date | null {
 
 /**
  * Flattens Klarity's nested envelope into the shape the Patient model wants.
- * Shared by the created/rescheduled handlers so the mapping lives in one place.
+ * Shared by every event handler so the mapping lives in one place.
  */
 function mapKlarityFields(input: KlarityIntakeInput) {
 	const { appointment, patient: kp, insurance, extra, meta } = input;
@@ -361,21 +361,162 @@ function mapKlarityFields(input: KlarityIntakeInput) {
 		dateOfBirth: parseInstant(kp?.dob),
 		location: extra?.location?.trim() || null,
 		insuranceProvider: insurance?.primaryPayer?.trim() || null,
+		serviceType: appointment.serviceType?.trim() || null,
 		// Operational reason only, never clinical detail. Klarity also sends a
 		// free-text `notes` field a provider may have typed anything into, so that
 		// one is deliberately NOT stored — only the short structured `reason` is.
 		problemDescription: appointment.reason?.trim() || null,
 		providerName,
+		// Klarity does not send who is hosting/running the call today — this stays
+		// null from the webhook. The column exists on AppointmentHistory for a
+		// manual entry or a future Klarity field.
+		hostName: null as string | null,
 		paymentDetails: JSON.parse(JSON.stringify(vendorMetadata)),
 	};
 }
 
-/** Look up the patient this event refers to, by the vendor appointment id. */
-async function findByKlarityAppointment(externalAppointmentId: string) {
-	return prisma.patient.findUnique({
-		where: { externalAppointmentId },
-		select: { id: true, firstName: true, lastName: true, stage: true, status: true, visitStatus: true },
+type MappedKlarityFields = ReturnType<typeof mapKlarityFields>;
+
+/**
+ * A patient's `appointmentDatetime`/`appointmentEndDatetime` are a denormalized
+ * "next appointment" snapshot for the board/card — call this after ANY write to
+ * that patient's AppointmentHistory so the snapshot never goes stale. Prefers
+ * the soonest still-live upcoming appointment; falls back to the most recent
+ * appointment of any kind (so a fully-lapsed patient still shows their last
+ * known date rather than a blank one); null only when there is no history at
+ * all yet (pre-existing patients from before this feature).
+ */
+async function recomputeNextAppointment(patientId: string): Promise<void> {
+	const upcoming = await prisma.appointmentHistory.findFirst({
+		where: { patientId, appointmentDatetime: { gte: new Date() }, status: { in: ["scheduled", "rescheduled"] } },
+		orderBy: { appointmentDatetime: "asc" },
 	});
+	const chosen =
+		upcoming ??
+		(await prisma.appointmentHistory.findFirst({ where: { patientId }, orderBy: { appointmentDatetime: "desc" } }));
+
+	await prisma.patient.update({
+		where: { id: patientId },
+		data: {
+			appointmentDatetime: chosen?.appointmentDatetime ?? null,
+			appointmentEndDatetime: chosen?.appointmentEndDatetime ?? null,
+			externalAppointmentId: chosen?.externalAppointmentId ?? null,
+		},
+	});
+}
+
+/**
+ * Creates or updates the ONE AppointmentHistory row for this specific vendor
+ * appointment (matched by externalAppointmentId) — this is what makes a
+ * reschedule/cancel/no-show/completed event for the SAME Klarity appointment
+ * update in place instead of appending a duplicate row. A genuinely different
+ * appointment (a different externalAppointmentId) always gets its own new row,
+ * which is what actually solves "a second booking must not erase the first."
+ */
+async function upsertAppointmentHistoryRow(
+	patientId: string,
+	f: MappedKlarityFields,
+	eventType: string,
+	status: "scheduled" | "rescheduled" | "canceled" | "no_show" | "completed",
+) {
+	if (!f.startAt) throw new Error("upsertAppointmentHistoryRow requires a valid startAt");
+
+	const existing = f.externalAppointmentId
+		? await prisma.appointmentHistory.findUnique({ where: { externalAppointmentId: f.externalAppointmentId } })
+		: null;
+
+	if (existing) {
+		return prisma.appointmentHistory.update({
+			where: { id: existing.id },
+			data: {
+				// A reschedule is the only case that should preserve "what it used to
+				// be" — a plain re-delivery of the same event must not keep shifting
+				// previousDatetime forward on every retry.
+				previousDatetime: status === "rescheduled" ? existing.appointmentDatetime : existing.previousDatetime,
+				appointmentDatetime: f.startAt,
+				appointmentEndDatetime: f.endAt,
+				status,
+				lastEventType: eventType,
+				providerName: f.providerName ?? existing.providerName,
+				hostName: f.hostName ?? existing.hostName,
+				serviceType: f.serviceType ?? existing.serviceType,
+				reason: f.problemDescription ?? existing.reason,
+			},
+		});
+	}
+
+	return prisma.appointmentHistory.create({
+		data: {
+			patientId,
+			externalAppointmentId: f.externalAppointmentId,
+			appointmentDatetime: f.startAt,
+			appointmentEndDatetime: f.endAt,
+			status,
+			source: "klarity",
+			lastEventType: eventType,
+			providerName: f.providerName,
+			hostName: f.hostName,
+			serviceType: f.serviceType,
+			reason: f.problemDescription,
+		},
+	});
+}
+
+/**
+ * Identifies a RETURNING patient across separate bookings, so a new
+ * appointment.created for someone already on the board attaches to their
+ * existing card instead of creating a duplicate (or, previously, being
+ * rejected outright). Tried in order: Klarity's own clientId (most reliable —
+ * survives a name typo or a changed email), then email, then phone.
+ */
+async function findExistingKlarityPatient(externalPatientId: string | null, email: string | null, phone: string | null) {
+	if (externalPatientId) {
+		const byClientId = await prisma.patient.findFirst({ where: { externalPatientId } });
+		if (byClientId) return byClientId;
+	}
+	if (email) {
+		const byEmail = await prisma.patient.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+		if (byEmail) return byEmail;
+	}
+	if (phone) {
+		const normalizedPhone = phone.replace(/\D/g, "");
+		if (normalizedPhone.length >= 10) {
+			const byPhone = await prisma.patient.findFirst({
+				where: { phone: { contains: normalizedPhone, mode: "insensitive" } },
+			});
+			if (byPhone) return byPhone;
+		}
+	}
+	return null;
+}
+
+/**
+ * Klarity intake is the one path that does NOT run resolveAutoAssign's
+ * practitioner-name / appointment-time rules — per business rule, every
+ * Klarity-created patient defaults to the clinic owner (Donna) so she can
+ * triage and hand off, rather than a VA getting auto-assigned a booking that
+ * came in through this specific channel. Still just a default: any VA/admin
+ * can reassign via PATCH /:id/assign afterward, same as every other patient.
+ */
+async function findDefaultKlarityAssignee(): Promise<string | null> {
+	// Donna's role in the DB is super_admin, not admin (discovered and fixed
+	// elsewhere in this codebase) — check that first, then fall back to a
+	// plain admin so this still works if the org ever adds one.
+	const superAdmin = await prisma.user.findFirst({ where: { role: "super_admin" }, select: { id: true } });
+	if (superAdmin) return superAdmin.id;
+	const admin = await prisma.user.findFirst({ where: { role: "admin" }, select: { id: true } });
+	if (admin) return admin.id;
+	logger.warn("Klarity intake - no admin/super_admin user found to assign as default; leaving unassigned");
+	return null;
+}
+
+/** Look up the patient + appointment row this lifecycle event refers to, by vendor appointment id. */
+async function findByKlarityAppointment(externalAppointmentId: string) {
+	const history = await prisma.appointmentHistory.findUnique({
+		where: { externalAppointmentId },
+		include: { patient: true },
+	});
+	return history;
 }
 
 /**
@@ -387,10 +528,10 @@ async function findByKlarityAppointment(externalAppointmentId: string) {
 function klarityUnknownAppointment(eventType: string, externalAppointmentId: string) {
 	logger.warn(
 		{ eventType, externalAppointmentId },
-		"Klarity webhook - no patient matches this appointment id, acknowledged without action",
+		"Klarity webhook - no appointment matches this id, acknowledged without action",
 	);
 	return ServiceResponse.success(
-		`No patient is linked to Klarity appointment ${externalAppointmentId}. Acknowledged, no action taken.`,
+		`No appointment matches Klarity appointment ${externalAppointmentId}. Acknowledged, no action taken.`,
 		{ eventType, externalAppointmentId, handled: false },
 		StatusCodes.ACCEPTED,
 	);
@@ -398,11 +539,15 @@ function klarityUnknownAppointment(eventType: string, externalAppointmentId: str
 
 const klarityHandlers = {
 	/**
-	 * appointment.created → create the card at the first stage (onboarding),
-	 * auto-assigned by the existing practitioner/appointment-time rules.
-	 *
-	 * Re-delivery of the same appointment id refreshes the existing card instead
-	 * of creating a second one.
+	 * appointment.created → three cases:
+	 *   1. Same appointment id already recorded → idempotent replay, refresh in place.
+	 *   2. A different appointment id, but the PERSON already has a patient card
+	 *      (matched by Klarity clientId / email / phone) → a returning patient
+	 *      booking again. Attach a new AppointmentHistory row to their EXISTING
+	 *      card (pipeline stage untouched) instead of creating a duplicate patient
+	 *      or, as before this feature, rejecting the booking outright.
+	 *   3. Truly new person → create the card at the first stage (onboarding),
+	 *      assigned to Donna (see findDefaultKlarityAssignee).
 	 */
 	async created(input: KlarityIntakeInput) {
 		const f = mapKlarityFields(input);
@@ -422,11 +567,14 @@ const klarityHandlers = {
 			);
 		}
 
-		// Idempotent re-delivery: same appointment id → refresh, do not duplicate.
-		const existing = await findByKlarityAppointment(f.externalAppointmentId);
-		if (existing) {
-			const updated = await prisma.patient.update({
-				where: { id: existing.id },
+		// Case 1: idempotent re-delivery of the exact same appointment.
+		const existingHistory = f.externalAppointmentId
+			? await prisma.appointmentHistory.findUnique({ where: { externalAppointmentId: f.externalAppointmentId } })
+			: null;
+		if (existingHistory) {
+			await upsertAppointmentHistoryRow(existingHistory.patientId, f, input.eventType, "scheduled");
+			await prisma.patient.update({
+				where: { id: existingHistory.patientId },
 				data: {
 					firstName: f.firstName,
 					lastName: f.lastName,
@@ -434,48 +582,63 @@ const klarityHandlers = {
 					phone: f.phone,
 					location: f.location,
 					dateOfBirth: f.dateOfBirth,
-					appointmentDatetime: f.startAt,
-					appointmentEndDatetime: f.endAt,
 					externalPatientId: f.externalPatientId,
 					problemDescription: f.problemDescription,
 					insuranceProvider: f.insuranceProvider,
 					paymentDetails: f.paymentDetails,
 				},
 			});
+			await recomputeNextAppointment(existingHistory.patientId);
+			const refreshed = await prisma.patient.findUniqueOrThrow({ where: { id: existingHistory.patientId } });
 			logger.info(
-				{ patientId: updated.id, externalAppointmentId: f.externalAppointmentId },
+				{ patientId: refreshed.id, externalAppointmentId: f.externalAppointmentId },
 				"Klarity created - already known, refreshed in place",
 			);
-			return ServiceResponse.success("Appointment already known; patient refreshed.", toPatientDto(updated));
+			return ServiceResponse.success("Appointment already known; patient refreshed.", toPatientDto(refreshed));
 		}
 
-		// Same duplicate posture as intake(): a person already on the board is not
-		// created twice just because another appointment came through.
-		if (f.email && (await findDuplicateByEmail(f.email))) {
-			return ServiceResponse.failure(
-				"A patient with this email already exists. Klarity intake skipped to avoid a duplicate record.",
-				null,
-				StatusCodes.CONFLICT,
+		// Case 2: same person, a genuinely new/different appointment.
+		const existingPatient = await findExistingKlarityPatient(f.externalPatientId, f.email, f.phone);
+		if (existingPatient) {
+			await upsertAppointmentHistoryRow(existingPatient.id, f, input.eventType, "scheduled");
+			await prisma.patient.update({
+				where: { id: existingPatient.id },
+				data: {
+					// Keep contact info current, but don't clobber an existing value
+					// with a blank one if this particular event happened to omit it.
+					firstName: f.firstName,
+					lastName: f.lastName ?? existingPatient.lastName,
+					email: f.email ?? existingPatient.email,
+					phone: f.phone ?? existingPatient.phone,
+					externalPatientId: f.externalPatientId ?? existingPatient.externalPatientId,
+				},
+			});
+			await recomputeNextAppointment(existingPatient.id);
+			const refreshed = await prisma.patient.findUniqueOrThrow({ where: { id: existingPatient.id } });
+
+			logger.info(
+				{ patientId: existingPatient.id, externalAppointmentId: f.externalAppointmentId },
+				"Klarity created - new appointment added to existing patient's history",
+			);
+			await audit({
+				patientId: existingPatient.id,
+				user: null,
+				action: "patient.appointment.create",
+				entityType: "patient",
+				entityId: existingPatient.id,
+				newValue: { source: "klarity", externalAppointmentId: f.externalAppointmentId, appointmentDatetime: f.startAt },
+				message: "New appointment booked via Klarity (added to this patient's appointment history)",
+				type: "auto",
+			});
+			return ServiceResponse.success(
+				"New appointment added to existing patient's history.",
+				toPatientDto(refreshed),
 			);
 		}
-		const normalizedPhone = f.phone?.replace(/\D/g, "") || null;
-		if (normalizedPhone && normalizedPhone.length >= 10) {
-			const byPhone = await prisma.patient.findFirst({
-				where: { phone: { contains: normalizedPhone, mode: "insensitive" } },
-				select: { id: true, firstName: true, lastName: true },
-			});
-			if (byPhone) {
-				logger.warn({ phone: f.phone, existingPatientId: byPhone.id }, "Klarity created - duplicate phone, skipping");
-				return ServiceResponse.failure(
-					`A patient with this phone number already exists (${byPhone.firstName} ${byPhone.lastName ?? ""}). Klarity intake skipped to avoid a duplicate record.`,
-					null,
-					StatusCodes.CONFLICT,
-				);
-			}
-		}
 
+		// Case 3: brand-new person.
 		const firstStage = await getFirstStageKey();
-		const { assignedTo, assignmentMethod } = await resolveAutoAssign({ practitionerName: f.providerName }, f.startAt);
+		const assignedTo = await findDefaultKlarityAssignee();
 
 		const patient = await prisma.patient.create({
 			data: {
@@ -501,9 +664,25 @@ const klarityHandlers = {
 			},
 		});
 
+		await prisma.appointmentHistory.create({
+			data: {
+				patientId: patient.id,
+				externalAppointmentId: f.externalAppointmentId,
+				appointmentDatetime: f.startAt,
+				appointmentEndDatetime: f.endAt,
+				status: "scheduled",
+				source: "klarity",
+				lastEventType: input.eventType,
+				providerName: f.providerName,
+				hostName: f.hostName,
+				serviceType: f.serviceType,
+				reason: f.problemDescription,
+			},
+		});
+
 		logger.info(
-			{ patientId: patient.id, externalAppointmentId: f.externalAppointmentId, assignedTo, assignmentMethod },
-			"Klarity created - patient created",
+			{ patientId: patient.id, externalAppointmentId: f.externalAppointmentId, assignedTo },
+			"Klarity created - patient created, assigned to Donna by default",
 		);
 
 		await audit({
@@ -512,8 +691,8 @@ const klarityHandlers = {
 			action: "patient.create",
 			entityType: "patient",
 			entityId: patient.id,
-			newValue: { source: "klarity", externalAppointmentId: f.externalAppointmentId, assignedTo, assignmentMethod },
-			message: `New patient auto-created from Klarity${assignedTo ? ` - Auto-assigned via ${assignmentMethod}` : ""}`,
+			newValue: { source: "klarity", externalAppointmentId: f.externalAppointmentId, assignedTo, assignmentMethod: "klarity_default_admin" },
+			message: `New patient auto-created from Klarity${assignedTo ? " - Auto-assigned to Donna (Klarity default)" : ""}`,
 			type: "auto",
 		});
 
@@ -541,8 +720,9 @@ const klarityHandlers = {
 	},
 
 	/**
-	 * appointment.rescheduled → move the appointment window and mark the visit
-	 * `rescheduled` so the board shows why the date changed. The pipeline stage is
+	 * appointment.rescheduled → moves the SAME appointment (matched by
+	 * externalAppointmentId) to its new date, recording what it used to be in
+	 * `previousDatetime` rather than silently losing it. The pipeline stage is
 	 * deliberately untouched: moving a card forward is checklist-gated and is the
 	 * VA's call, not the vendor's.
 	 */
@@ -551,8 +731,8 @@ const klarityHandlers = {
 
 		const existing = await findByKlarityAppointment(f.externalAppointmentId);
 		if (!existing) {
-			// Nothing to reschedule — treat it as the first time we have seen this
-			// appointment, provided the payload carries enough to create the card.
+			// Nothing to reschedule — treat it as the first time we've seen this
+			// appointment, provided the payload carries enough to create it.
 			if (f.firstName && f.startAt) {
 				logger.info(
 					{ externalAppointmentId: f.externalAppointmentId },
@@ -571,19 +751,20 @@ const klarityHandlers = {
 			);
 		}
 
-		const updated = await prisma.patient.update({
-			where: { id: existing.id },
-			data: {
-				appointmentDatetime: f.startAt,
-				appointmentEndDatetime: f.endAt,
-				visitStatus: "rescheduled",
-				paymentDetails: f.paymentDetails,
-				// A reschedule reopens a previously cancelled booking.
-				...(existing.status === "cancelled"
-					? { status: "active" as const, cancelledAt: null, cancelledReason: null, cancelledById: null }
-					: {}),
-			},
-		});
+		await upsertAppointmentHistoryRow(existing.patientId, f, input.eventType, "rescheduled");
+		await recomputeNextAppointment(existing.patientId);
+
+		// A reschedule reopens a previously whole-card-cancelled patient. This is
+		// a distinct, coarser thing from a single appointment's own status (see
+		// canceled() below) — it only applies if the CARD itself was cancelled.
+		if (existing.patient.status === "cancelled") {
+			await prisma.patient.update({
+				where: { id: existing.patientId },
+				data: { status: "active", cancelledAt: null, cancelledReason: null, cancelledById: null },
+			});
+		}
+
+		const refreshed = await prisma.patient.findUniqueOrThrow({ where: { id: existing.patientId } });
 
 		const when = f.startAt.toLocaleString("en-US", {
 			weekday: "short",
@@ -595,110 +776,112 @@ const klarityHandlers = {
 		});
 
 		logger.info(
-			{ patientId: updated.id, externalAppointmentId: f.externalAppointmentId, startAt: f.startAt },
+			{ patientId: refreshed.id, externalAppointmentId: f.externalAppointmentId, startAt: f.startAt },
 			"Klarity rescheduled - appointment moved",
 		);
 
 		await audit({
-			patientId: updated.id,
+			patientId: refreshed.id,
 			user: null,
 			action: "patient.appointment.update",
 			entityType: "patient",
-			entityId: updated.id,
+			entityId: refreshed.id,
 			newValue: { source: "klarity", appointmentDatetime: f.startAt, externalAppointmentId: f.externalAppointmentId },
 			message: `Appointment rescheduled via Klarity to ${when}`,
 			type: "auto",
 		});
 
-		return ServiceResponse.success("Appointment rescheduled from Klarity webhook.", toPatientDto(updated));
+		return ServiceResponse.success("Appointment rescheduled from Klarity webhook.", toPatientDto(refreshed));
 	},
 
 	/**
-	 * appointment.canceled → set the patient's status to `cancelled` with a reason,
-	 * which is the same state the admin-only cancel action produces. The card stays
-	 * on the board (with its history) rather than being deleted.
+	 * appointment.canceled → marks THAT SPECIFIC appointment cancelled in its own
+	 * history row. Deliberately does NOT touch the patient's card-level
+	 * status/pipeline — a patient can have more than one appointment now, so
+	 * cancelling one of them must not cancel the whole card (that remains a
+	 * separate, explicit admin action). recomputeNextAppointment naturally skips
+	 * cancelled rows, so the card's "next appointment" moves on to whatever else
+	 * is upcoming, or shows none if this was the only one.
 	 */
 	async canceled(input: KlarityIntakeInput) {
-		const f = mapKlarityFields(input);
+		const externalAppointmentId = input.appointment.id;
+		const existing = await findByKlarityAppointment(externalAppointmentId);
+		if (!existing) return klarityUnknownAppointment(input.eventType, externalAppointmentId);
 
-		const existing = await findByKlarityAppointment(f.externalAppointmentId);
-		if (!existing) return klarityUnknownAppointment(input.eventType, f.externalAppointmentId);
-
-		// Idempotent: a re-delivered cancel is a no-op, not a second cancel.
-		if (existing.status === "cancelled") {
-			logger.info(
-				{ patientId: existing.id, externalAppointmentId: f.externalAppointmentId },
-				"Klarity canceled - already cancelled, no action",
+		if (existing.status === "canceled") {
+			logger.info({ externalAppointmentId }, "Klarity canceled - already cancelled, no action");
+			return ServiceResponse.success(
+				"This appointment was already cancelled; no change made.",
+				toPatientDto(existing.patient),
 			);
-			const current = await prisma.patient.findUniqueOrThrow({ where: { id: existing.id } });
-			return ServiceResponse.success("Patient was already cancelled; no change made.", toPatientDto(current));
 		}
 
-		const updated = await prisma.patient.update({
+		await prisma.appointmentHistory.update({
 			where: { id: existing.id },
-			data: {
-				status: "cancelled",
-				cancelledAt: parseInstant(input.eventTimestamp) ?? new Date(),
-				cancelledReason: "Cancelled in Klarity",
-				paymentDetails: f.paymentDetails,
-			},
+			data: { status: "canceled", lastEventType: input.eventType },
 		});
+		await recomputeNextAppointment(existing.patientId);
+
+		const refreshed = await prisma.patient.findUniqueOrThrow({ where: { id: existing.patientId } });
 
 		logger.info(
-			{ patientId: updated.id, externalAppointmentId: f.externalAppointmentId },
-			"Klarity canceled - patient marked cancelled",
+			{ patientId: existing.patientId, externalAppointmentId },
+			"Klarity canceled - appointment marked cancelled",
 		);
 
 		await audit({
-			patientId: updated.id,
+			patientId: existing.patientId,
 			user: null,
-			action: "patient.status.update",
+			action: "patient.appointment.update",
 			entityType: "patient",
-			entityId: updated.id,
+			entityId: existing.patientId,
 			prevValue: { status: existing.status },
-			newValue: { status: "cancelled", source: "klarity" },
-			message: "Appointment cancelled in Klarity",
+			newValue: { status: "canceled", externalAppointmentId, source: "klarity" },
+			message: "One appointment cancelled via Klarity (other appointments on this patient, if any, are unaffected)",
 			type: "auto",
 		});
 
-		return ServiceResponse.success("Patient marked cancelled from Klarity webhook.", toPatientDto(updated));
+		return ServiceResponse.success("Appointment cancelled from Klarity webhook.", toPatientDto(refreshed));
 	},
 
 	/**
-	 * appointment.no_show → visitStatus `no_show`.
-	 * appointment.completed → visitStatus `arrived`.
+	 * appointment.no_show → that appointment's status = no_show, patient's
+	 * current visitStatus = no_show.
+	 * appointment.completed → that appointment's status = completed, patient's
+	 * current visitStatus = arrived.
 	 *
 	 * Both only record what happened at the appointment. Neither advances the
 	 * pipeline stage: forward moves are checklist-gated (CLAUDE.md core rule 1),
 	 * so "the patient showed up" is information for the VA, not permission to skip
-	 * the gate. The card stays where it is with an accurate visit status and an
-	 * audit entry.
+	 * the gate.
 	 */
 	async markVisit(input: KlarityIntakeInput, visitStatus: "no_show" | "arrived") {
 		const externalAppointmentId = input.appointment.id;
-
 		const existing = await findByKlarityAppointment(externalAppointmentId);
 		if (!existing) return klarityUnknownAppointment(input.eventType, externalAppointmentId);
 
-		if (existing.visitStatus === visitStatus) {
-			logger.info(
-				{ patientId: existing.id, visitStatus },
-				"Klarity visit event - visit status already set, no action",
+		const historyStatus = visitStatus === "no_show" ? ("no_show" as const) : ("completed" as const);
+
+		if (existing.status === historyStatus && existing.patient.visitStatus === visitStatus) {
+			logger.info({ externalAppointmentId, visitStatus }, "Klarity visit event - already set, no action");
+			return ServiceResponse.success(
+				`This appointment was already marked ${visitStatus}; no change made.`,
+				toPatientDto(existing.patient),
 			);
-			const current = await prisma.patient.findUniqueOrThrow({ where: { id: existing.id } });
-			return ServiceResponse.success(`Visit status was already ${visitStatus}; no change made.`, toPatientDto(current));
 		}
 
-		const updated = await prisma.patient.update({
+		await prisma.appointmentHistory.update({
 			where: { id: existing.id },
+			data: { status: historyStatus, lastEventType: input.eventType },
+		});
+
+		const updated = await prisma.patient.update({
+			where: { id: existing.patientId },
 			data: { visitStatus },
 		});
 
 		const label = visitStatus === "no_show" ? "did not attend (no-show)" : "attended";
-		logger.info(
-			{ patientId: updated.id, externalAppointmentId, visitStatus },
-			"Klarity visit event - visit status updated",
-		);
+		logger.info({ patientId: updated.id, externalAppointmentId, visitStatus }, "Klarity visit event - visit status updated");
 
 		await audit({
 			patientId: updated.id,
@@ -706,8 +889,8 @@ const klarityHandlers = {
 			action: "patient.update",
 			entityType: "patient",
 			entityId: updated.id,
-			prevValue: { visitStatus: existing.visitStatus },
-			newValue: { visitStatus, source: "klarity" },
+			prevValue: { visitStatus: existing.patient.visitStatus },
+			newValue: { visitStatus, externalAppointmentId, source: "klarity" },
 			message: `Klarity reported the patient ${label}`,
 			type: "auto",
 		});
@@ -747,6 +930,29 @@ export const patientsService = {
 			return ServiceResponse.failure("Patient not found.", null, StatusCodes.NOT_FOUND);
 		}
 		return ServiceResponse.success("Patient retrieved.", toPatientDto(patient));
+	},
+
+	/**
+	 * Full appointment history for the modal's "Appointment History" tab —
+	 * admin and VA both, same visibility as the Activity Log tab (no extra role
+	 * gate beyond the patient itself being in scope). Newest first. A patient
+	 * with no rows (everyone created before this feature shipped, or anyone
+	 * whose only appointment came from a non-Klarity source) gets an empty
+	 * array — the frontend renders its own empty state for that, no fallback
+	 * data is invented here.
+	 */
+	async getAppointmentHistory(id: string, user: AuthenticatedUser) {
+		const patient = await prisma.patient.findUnique({ where: { id } });
+		if (!patient || !isPatientInScope(patient, user)) {
+			return ServiceResponse.failure("Patient not found.", null, StatusCodes.NOT_FOUND);
+		}
+
+		const history = await prisma.appointmentHistory.findMany({
+			where: { patientId: id },
+			orderBy: { appointmentDatetime: "desc" },
+		});
+
+		return ServiceResponse.success("Appointment history retrieved.", history);
 	},
 
 	async moveStage(id: string, input: StageMoveInput, user: AuthenticatedUser) {
