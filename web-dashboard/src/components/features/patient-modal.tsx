@@ -89,11 +89,11 @@ import { PAYMENT_METHOD_OPTIONS, INSURANCE_PROVIDER_OPTIONS, VISIT_STATUS_OPTION
 import { getStageColor } from "@/lib/stage-colors"
 import { actionMeta, fullDateTime } from "@/lib/activity-meta"
 import {
-  formatClinicDate,
-  formatClinicDateTime,
-  formatClinicTime,
-  fromClinicWallClockInput,
-  toClinicDatetimeLocalValue,
+  formatPatientDate,
+  formatPatientDateTime,
+  formatPatientTime,
+  fromPatientWallClockInput,
+  toPatientDatetimeLocalValue,
 } from "@/lib/clinic-time"
 import { cn, getInitials } from "@/lib/utils"
 import { isValidUsPhone, formatUsPhone } from "@/lib/us-phone"
@@ -538,7 +538,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
     setDeletingNoteId(null)
     if (patient?.appointmentDatetime) {
       const dt = new Date(patient.appointmentDatetime)
-      setNewAppointmentDatetime(toClinicDatetimeLocalValue(dt))
+      setNewAppointmentDatetime(toPatientDatetimeLocalValue(patient?.bookingPlatform, dt))
     } else {
       setNewAppointmentDatetime("")
     }
@@ -560,7 +560,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
 
   useEffect(() => {
     if (patient?.appointmentDatetime) {
-      setNewAppointmentDatetime(toClinicDatetimeLocalValue(new Date(patient.appointmentDatetime)))
+      setNewAppointmentDatetime(toPatientDatetimeLocalValue(patient.bookingPlatform, new Date(patient.appointmentDatetime)))
     } else {
       setNewAppointmentDatetime("")
     }
@@ -701,7 +701,7 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
     // whatever timezone the VA's own computer happens to be set to. Converting
     // with plain `new Date(...)` here would silently store the wrong instant
     // for any VA not physically in the clinic's own timezone.
-    const realInstant = fromClinicWallClockInput(newAppointmentDatetime)
+    const realInstant = fromPatientWallClockInput(patient.bookingPlatform, newAppointmentDatetime)
     if (realInstant.getTime() < getMinAppointmentDate().getTime()) {
       toast.error("Appointment date cannot be in the past")
       return
@@ -840,7 +840,7 @@ const isExpired = () => {
                           appt.status === "canceled" && "line-through decoration-2 text-red-600",
                         )}
                       >
-                        {formatClinicDateTime(new Date(appt.appointmentDatetime), { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+                        {formatPatientDateTime(appt.source, new Date(appt.appointmentDatetime), { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
                       </span>
                     </div>
                     <span
@@ -856,7 +856,7 @@ const isExpired = () => {
 
                   {appt.previousDatetime && (
                     <p className="text-xs text-[#6B7280] mt-1.5 ml-6">
-                      Moved from <span className="line-through">{formatClinicDateTime(new Date(appt.previousDatetime), { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                      Moved from <span className="line-through">{formatPatientDateTime(appt.source, new Date(appt.previousDatetime), { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
                     </p>
                   )}
 
@@ -1184,7 +1184,7 @@ const isExpired = () => {
                         <button
                           onClick={() => {
                             setEditingAppointment(false)
-                            if (patient.appointmentDatetime) setNewAppointmentDatetime(toClinicDatetimeLocalValue(new Date(patient.appointmentDatetime)))
+                            if (patient.appointmentDatetime) setNewAppointmentDatetime(toPatientDatetimeLocalValue(patient.bookingPlatform, new Date(patient.appointmentDatetime)))
                             else setNewAppointmentDatetime("")
                           }}
                           className="px-2.5 py-1 text-[11px] font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
@@ -1197,10 +1197,10 @@ const isExpired = () => {
                     <>
                       {patient.appointmentDatetime ? (
                         <>
-                          {formatClinicDate(new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" })}
+                          {formatPatientDate(patient.bookingPlatform, new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" })}
                           <br />
                           <span className="font-semibold text-emerald-600">
-                            {formatClinicTime(new Date(patient.appointmentDatetime))}
+                            {formatPatientTime(patient.bookingPlatform, new Date(patient.appointmentDatetime))}
                           </span>
                         </>
                       ) : (
@@ -2508,16 +2508,16 @@ const isExpired = () => {
                     <DateTimePicker compact minDate={getMinAppointmentDate()} value={newAppointmentDatetime ? new Date(newAppointmentDatetime).toISOString() : ""} onChange={(iso) => setNewAppointmentDatetime(toLocalDatetimeLocal(new Date(iso)))} />
                     <div className="flex gap-1">
                       <button onClick={handleUpdateAppointment} disabled={updateAppointment.isPending || !newAppointmentDatetime.trim()} className="flex-1 text-[10px] font-semibold py-1 rounded bg-emerald-600 text-white">Save</button>
-                      <button onClick={() => { setEditingAppointment(false); if (patient.appointmentDatetime) setNewAppointmentDatetime(toClinicDatetimeLocalValue(new Date(patient.appointmentDatetime))); else setNewAppointmentDatetime(""); }} className="px-2 py-1 text-[10px] font-medium rounded border border-gray-200 text-gray-600">Cancel</button>
+                      <button onClick={() => { setEditingAppointment(false); if (patient.appointmentDatetime) setNewAppointmentDatetime(toPatientDatetimeLocalValue(patient.bookingPlatform, new Date(patient.appointmentDatetime))); else setNewAppointmentDatetime(""); }} className="px-2 py-1 text-[10px] font-medium rounded border border-gray-200 text-gray-600">Cancel</button>
                     </div>
                   </div>
                 ) : (
                   <div className="flex items-center justify-between gap-1.5">
                     <div className="flex flex-col min-w-0">
                       <p className="text-xs font-bold text-gray-800 truncate">
-                        {patient.appointmentDatetime ? formatClinicDate(new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" }) : "Not scheduled"}
+                        {patient.appointmentDatetime ? formatPatientDate(patient.bookingPlatform, new Date(patient.appointmentDatetime), { month: "short", day: "numeric", year: "numeric" }) : "Not scheduled"}
                       </p>
-                      {patient.appointmentDatetime && <p className="text-[10px] font-medium text-emerald-600">{formatClinicTime(new Date(patient.appointmentDatetime))}</p>}
+                      {patient.appointmentDatetime && <p className="text-[10px] font-medium text-emerald-600">{formatPatientTime(patient.bookingPlatform, new Date(patient.appointmentDatetime))}</p>}
                     </div>
                     <button onClick={() => setEditingAppointment(true)} className="p-1 rounded hover:bg-emerald-50 text-emerald-500"><Pencil className="w-3 h-3" /></button>
                   </div>

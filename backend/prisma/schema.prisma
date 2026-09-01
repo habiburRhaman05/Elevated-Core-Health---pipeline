@@ -183,10 +183,10 @@ model Patient {
   source                 String            @default("manual")
   createdById            String?           @map("created_by")
   bookingPlatform        String?           @map("booking_platform")
-  appointmentDatetime    DateTime?         @map("appointment_datetime")
+  appointmentDatetime    DateTime?         @map("appointment_datetime") @db.Timestamptz(3)
   // End of the booked slot. Klarity sends a real endAt; other sources leave it
   // null and the calendar falls back to its own default slot length.
-  appointmentEndDatetime DateTime?         @map("appointment_end_datetime")
+  appointmentEndDatetime DateTime?         @map("appointment_end_datetime") @db.Timestamptz(3)
   // Klarity clientId — identifies the same PERSON across multiple bookings, so
   // a second appointment attaches to this existing patient instead of creating
   // a duplicate. Null for manual and email-parsed intake.
@@ -276,12 +276,12 @@ model AppointmentHistory {
   patientId String  @map("patient_id")
   patient   Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
-  appointmentDatetime    DateTime  @map("appointment_datetime")
-  appointmentEndDatetime DateTime? @map("appointment_end_datetime")
+  appointmentDatetime    DateTime  @map("appointment_datetime") @db.Timestamptz(3)
+  appointmentEndDatetime DateTime? @map("appointment_end_datetime") @db.Timestamptz(3)
   // What the date/time was immediately before the most recent reschedule —
   // null until the first reschedule. Lets the history tab show "moved from
   // Sep 5 to Sep 6" without a separate full event-log table.
-  previousDatetime       DateTime? @map("previous_datetime")
+  previousDatetime       DateTime? @map("previous_datetime") @db.Timestamptz(3)
 
   status AppointmentEventStatus @default(scheduled)
 

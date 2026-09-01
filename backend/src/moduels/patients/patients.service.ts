@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit";
 import { isPatientInScope, patientScopeFor } from "@/lib/scope";
 import type { AuthenticatedUser } from "@/lib/types";
 import { emailService } from "@/services/email.service";
+import { combineWebhookDateAndTime, getClinicHour } from "@/utils/clinicTime";
 import { logger } from "@/utils/logger";
 import { prisma } from "@/utils/prisma";
 import { ServiceResponse } from "@/utils/serviceResponse";
@@ -262,7 +263,11 @@ async function resolveAutoAssign(
 
 	// 2. If not assigned yet and appointment time provided, use time-based assignment
 	if (!assignedTo && appointmentDatetime) {
-		const appointmentHour = appointmentDatetime.getHours();
+		// CLAUDE.md core rule 0 defines this cutoff in LOCAL CLINIC TIME.
+		// `.getHours()` would read the server's timezone instead: on a
+		// UTC-deployed instance a 9:00 AM Eastern appointment (13:00 UTC) reads
+		// back as hour 13 and gets routed to the evening VA.
+		const appointmentHour = getClinicHour(appointmentDatetime);
 		const jude = vas.find((va) => va.name?.toLowerCase().includes("jude"));
 		const amanda = vas.find((va) => va.name?.toLowerCase().includes("amanda"));
 
@@ -1784,16 +1789,19 @@ export const patientsService = {
 				// strings (the old approach) produces something like
 				// "Sat Aug 22 04:00:00 2026 21:00", which `new Date(...)` can't
 				// parse at all - confirmed live, this silently dropped the
-				// appointment date on every webhook intake. Instead: parse
-				// apptDate for its calendar date only, then apply
-				// apptStartTime's hour/minute on top of that same date.
-				const dateOnly = new Date(input.apptDate);
-				const timeMatch = input.apptStartTime.match(/^(\d{1,2}):(\d{2})/);
-				if (!Number.isNaN(dateOnly.getTime()) && timeMatch) {
-					const combined = new Date(dateOnly);
-					combined.setHours(Number(timeMatch[1]), Number(timeMatch[2]), 0, 0);
-					appointmentDatetime = combined;
-				} else {
+				// appointment date on every webhook intake.
+				//
+				// The fix after that used `combined.setHours(...)`, which parsed
+				// correctly but resolved the hour against the SERVER's timezone
+				// rather than the clinic's — so the stored instant depended on
+				// where the process ran: "21:00" became 15:00Z on a Dhaka dev
+				// machine, 21:00Z on a UTC Vercel function, and only the
+				// intended 01:00Z (9 PM Eastern) on an Eastern server. That is
+				// the 10–11 hour discrepancy seen against Optimantra's own UI.
+				// combineWebhookDateAndTime anchors the hour to the clinic's
+				// timezone explicitly, so every environment agrees.
+				appointmentDatetime = combineWebhookDateAndTime(input.apptDate, input.apptStartTime);
+				if (!appointmentDatetime) {
 					logger.warn(
 						{ apptDate: input.apptDate, apptStartTime: input.apptStartTime },
 						"Could not parse webhook appointment date fields",
@@ -2164,7 +2172,9 @@ export const patientsService = {
 		// Auto-assign VA based on appointment time if patient not already assigned
 		let newAssignedTo = patient.assignedTo;
 		if (!patient.assignedTo && newDateTime) {
-			const appointmentHour = newDateTime.getHours();
+			// Clinic-local hour, not the server's — same rule and same reasoning
+			// as resolveAutoAssign above (CLAUDE.md core rule 0).
+			const appointmentHour = getClinicHour(newDateTime);
 			const vas = await prisma.user.findMany({
 				where: { role: "va" },
 				select: { id: true, name: true },

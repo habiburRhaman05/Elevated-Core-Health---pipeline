@@ -6,7 +6,7 @@ import { useChecklistItems } from "@/hooks/query/usePatients"
 import type { Patient, PatientStage } from "@/types"
 import { cn } from "@/lib/utils"
 import { getStageColor } from "@/lib/stage-colors"
-import { formatClinicDate } from "@/lib/clinic-time"
+import { formatPatientDate } from "@/lib/clinic-time"
 
 interface PatientListViewProps {
   /** Already-filtered patients, shown across all stages in the list. */
@@ -193,7 +193,7 @@ function PatientListRow({
             {patient.appointmentDatetime && (
               <span className="flex items-center gap-1 text-[11px] text-[#6B7280] min-w-0">
                 <Calendar className="w-3 h-3 shrink-0" />
-                <span className="truncate">{formatAppointment(patient.appointmentDatetime)}</span>
+                <span className="truncate">{formatAppointment(patient.appointmentDatetime, patient.bookingPlatform)}</span>
               </span>
             )}
           </div>
@@ -236,9 +236,9 @@ function PatientListRow({
   )
 }
 
-function formatAppointment(datetime: string): string {
+function formatAppointment(datetime: string, bookingPlatform?: string | null): string {
   try {
-    return formatClinicDate(new Date(datetime), { month: "short", day: "numeric", year: "numeric" })
+    return formatPatientDate(bookingPlatform, new Date(datetime), { month: "short", day: "numeric", year: "numeric" })
   } catch {
     return datetime
   }
