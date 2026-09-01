@@ -611,6 +611,15 @@ const klarityHandlers = {
 					email: f.email ?? existingPatient.email,
 					phone: f.phone ?? existingPatient.phone,
 					externalPatientId: f.externalPatientId ?? existingPatient.externalPatientId,
+					// A brand-new booking reopens a previously cancelled CARD — same
+					// reopen rule as rescheduled() below. Without this, a returning
+					// patient's new appointment would show status "scheduled" in the
+					// history tab while the header badge still read "Cancelled" from
+					// whatever earlier appointment was cancelled — exactly the
+					// contradiction that showed up in testing.
+					...(existingPatient.status === "cancelled"
+						? { status: "active" as const, cancelledAt: null, cancelledReason: null, cancelledById: null }
+						: {}),
 				},
 			});
 			await recomputeNextAppointment(existingPatient.id);

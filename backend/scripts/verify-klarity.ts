@@ -341,6 +341,29 @@ async function main() {
 	const emptyHistResp = await patientsService.getAppointmentHistory("00000000-0000-0000-0000-000000000000", fakeAdmin);
 	check("history for nonexistent patient → 404 (not a crash)", emptyHistResp.statusCode === 404);
 
+	console.log("\n=== 11. A cancelled CARD gets a brand-new booking — must reopen ===");
+	// Simulates exactly the state a legacy patient could be stuck in: card-level
+	// status='cancelled' from an old cancel, then a genuinely new appointment
+	// arrives. Before this fix, created()'s "returning patient" branch never
+	// reopened the card, so the header kept showing "Cancelled" while the new
+	// appointment's own history row correctly said "scheduled" — a visible
+	// contradiction a real user caught in testing.
+	await prisma.patient.update({
+		where: { id: patientId },
+		data: { status: "cancelled", cancelledAt: new Date(), cancelledReason: "test setup" },
+	});
+	const thirdBookingApptId = `${APPT_ID}-third`;
+	const thirdBooking = await dispatch({
+		...payloads.created,
+		appointment: { ...baseAppt, id: thirdBookingApptId, startAt: "2026-11-01T14:00:00Z", endAt: "2026-11-01T14:30:00Z" },
+	});
+	check("new booking for a cancelled card → 200", (thirdBooking as any).result?.statusCode === 200, (thirdBooking as any).result?.message);
+	p = await prisma.patient.findUnique({ where: { id: patientId } });
+	check("  card status reopened to 'active'", p?.status === "active", `status=${p?.status}`);
+	check("  cancelledAt cleared", p?.cancelledAt === null, String(p?.cancelledAt));
+	const thirdRow = await prisma.appointmentHistory.findUnique({ where: { externalAppointmentId: thirdBookingApptId } });
+	check("  new row status = scheduled (consistent with the now-active card)", thirdRow?.status === "scheduled", thirdRow?.status);
+
 	// cleanup
 	if (patientId) {
 		await prisma.appointmentHistory.deleteMany({ where: { patientId } });
