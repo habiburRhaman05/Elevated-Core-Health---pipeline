@@ -1,30 +1,18 @@
 import { pino } from "pino";
-import { createServer } from "node:http";
-import { connectToDatabase } from "@/config/db";
+
 import { app } from "./app";
-import { env } from "./utils/envConfig";
 
 const logger = pino({ name: "server start" });
 
-// Re-export for backward compatibility (index.ts imports { app, logger })
+/**
+ * Assembles the Express app and the shared logger — and deliberately does NOT
+ * listen. `index.ts` is the single entrypoint: it creates the HTTP server,
+ * attaches the realtime WebSocket handler, and calls listen() exactly once.
+ *
+ * This module used to create its own httpServer and call
+ * `httpServer.listen(env.PORT)` at module scope. Since index.ts imports from
+ * here, that ran on import and bound the port, so index.ts's own listen() on
+ * the same port then always failed with EADDRINUSE. The listening lives in one
+ * place now; do not reintroduce a listen() call here.
+ */
 export { app, logger };
-
-const httpServer = createServer(app);
-
-const server = httpServer.listen(env.PORT, async () => {
-	await connectToDatabase();
-	const { NODE_ENV, HOST, PORT } = env;
-	console.log(`ECH Pipeline Portal (${NODE_ENV}) running on http://${HOST}:${PORT}`);
-});
-
-const onCloseSignal = () => {
-	console.log("sigint received, shutting down");
-	server.close(() => {
-		console.log("server closed");
-		process.exit();
-	});
-	setTimeout(() => process.exit(1), 10000).unref();
-};
-
-process.on("SIGINT", onCloseSignal);
-process.on("SIGTERM", onCloseSignal);

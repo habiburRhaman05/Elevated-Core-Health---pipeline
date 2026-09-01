@@ -166,6 +166,16 @@ export const patientsController = {
 		handleServiceResponse(serviceResponse, res);
 	},
 
+	/** Klarity appointment webhook. Auth is the bearer token checked by requireKlarityToken. */
+	async intakeKlarity(req: Request, res: Response): Promise<void> {
+		logger.info(
+			{ eventType: req.body?.eventType, appointmentId: req.body?.appointment?.id, path: req.path },
+			"Klarity webhook intake received",
+		);
+		const serviceResponse = await patientsService.intakeKlarity(req.body);
+		handleServiceResponse(serviceResponse, res);
+	},
+
 	async create(req: Request, res: Response): Promise<void> {
 		if (!req.user) {
 			handleServiceResponse(ServiceResponse.failure("Not authenticated", null, 401), res);

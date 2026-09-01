@@ -27,6 +27,12 @@ const envSchema = z.object({
 
 	WEBHOOK_SECRET: z.string().min(16, "WEBHOOK_SECRET must be at least 16 characters"),
 
+	// Klarity pushes appointments to POST /api/patients/intake/klarity and
+	// authenticates with a static bearer token. The default below is the value
+	// Klarity is configured with today; override per-environment to rotate it.
+	// Compared against the full Authorization header, so it includes "Bearer ".
+	KLARITY_WEBHOOK_TOKEN: z.string().min(1).default("Bearer wwre2543tetewr3543r4werwer634266"),
+
 	RESEND_API_KEY: emptyToUndefined(z.string().optional()),
 	FROM_EMAIL: z.string().default("notifications@elevatedcorehealth.com"),
 

@@ -1,0 +1,250 @@
+### Klarity webhook — POST /api/patients/intake/klarity
+###
+### Start the backend first:   npm run dev
+### Then run these top-to-bottom (VS Code REST Client, or use the curl versions
+### at the bottom). They share one appointment id so the lifecycle is coherent.
+
+@host = http://localhost:8080
+@token = Bearer wwre2543tetewr3543r4werwer634266
+@apptId = 12345
+@clientId = 67890
+
+
+### 1. Rejected — no Authorization header  → expect 401
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+
+{ "eventType": "appointment.created", "appointment": { "id": "{{apptId}}" } }
+
+
+### 2. Rejected — wrong token  → expect 401
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: Bearer totally-wrong-token
+
+{ "eventType": "appointment.created", "appointment": { "id": "{{apptId}}" } }
+
+
+### 3. Rejected — right token but missing the "Bearer " prefix  → expect 401
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: wwre2543tetewr3543r4werwer634266
+
+{ "eventType": "appointment.created", "appointment": { "id": "{{apptId}}" } }
+
+
+### 4. appointment.created  → expect 201, new card at Onboarding
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity",
+  "eventType": "appointment.created",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": {{apptId}},
+    "appointmentName": "Follow-up Visit",
+    "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z",
+    "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "scheduled",
+    "contactType": "video",
+    "serviceType": "Follow-up",
+    "serviceItemId": 222,
+    "serviceSpecialty": "Psychiatry",
+    "providerFirstName": "John",
+    "providerLastName": "Doe",
+    "reason": "Medication follow-up",
+    "notes": null,
+    "intakeFormStatus": "COMPLETE"
+  },
+  "patient": {
+    "id": {{clientId}},
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "preferredName": null,
+    "email": "jane@example.com",
+    "phone": "+15551234567",
+    "dob": "1990-01-15",
+    "gender": "Female",
+    "type": "patient",
+    "status": "Active"
+  },
+  "insurance": { "primaryPayer": null, "memberId": null, "groupNumber": null, "planName": null },
+  "extra": { "location": null, "address": null },
+  "meta": { "vendor": "klarity", "trigger": "polling", "syncVersion": "1.0" }
+}
+
+
+### 5. Replay of #4 (polling duplicate)  → expect 200 "already known", NOT a second card
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity",
+  "eventType": "appointment.created",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": {{apptId}}, "appointmentName": "Follow-up Visit", "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "scheduled", "providerFirstName": "John", "providerLastName": "Doe",
+    "reason": "Medication follow-up"
+  },
+  "patient": {
+    "id": {{clientId}}, "firstName": "Jane", "lastName": "Doe",
+    "email": "jane@example.com", "phone": "+15551234567", "dob": "1990-01-15"
+  },
+  "meta": { "vendor": "klarity", "trigger": "polling", "syncVersion": "1.0" }
+}
+
+
+### 6. appointment.rescheduled  → expect 200, date moves to Sep 6, visitStatus = rescheduled
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity",
+  "eventType": "appointment.rescheduled",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": {{apptId}}, "appointmentName": "Follow-up Visit", "clientId": {{clientId}},
+    "startAt": "2026-09-06T16:00:00Z", "endAt": "2026-09-06T16:30:00Z",
+    "appointmentStatus": "scheduled", "providerFirstName": "John", "providerLastName": "Doe",
+    "reason": "Medication follow-up"
+  },
+  "patient": {
+    "id": {{clientId}}, "firstName": "Jane", "lastName": "Doe",
+    "email": "jane@example.com", "phone": "+15551234567", "dob": "1990-01-15"
+  },
+  "meta": { "vendor": "klarity", "trigger": "polling", "syncVersion": "1.0" }
+}
+
+
+### 7. appointment.no_show — minimal payload, NO patient block  → expect 200, visitStatus = no_show
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity",
+  "eventType": "appointment.no_show",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": {{apptId}}, "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "patient-no-show"
+  }
+}
+
+
+### 8. appointment.completed — minimal payload  → expect 200, visitStatus = arrived
+###    NOTE: stage stays where it is. Advancing is checklist-gated, VA's call.
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity",
+  "eventType": "appointment.completed",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": {{apptId}}, "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "showed"
+  }
+}
+
+
+### 9. appointment.canceled  → expect 200, patient status = cancelled
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity",
+  "eventType": "appointment.canceled",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": {{apptId}}, "appointmentName": "Follow-up Visit", "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "canceled", "providerFirstName": "John", "providerLastName": "Doe",
+    "reason": "Medication follow-up"
+  },
+  "patient": {
+    "id": {{clientId}}, "firstName": "Jane", "lastName": "Doe",
+    "email": "jane@example.com", "phone": "+15551234567", "dob": "1990-01-15"
+  },
+  "meta": { "vendor": "klarity", "trigger": "polling", "syncVersion": "1.0" }
+}
+
+
+### 10. Replay of #9  → expect 200 "was already cancelled; no change made"
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity", "eventType": "appointment.canceled",
+  "appointment": {
+    "id": {{apptId}}, "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "canceled"
+  }
+}
+
+
+### 11. Unknown event type  → expect 202, acknowledged, no action
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity", "eventType": "appointment.brand_new_thing",
+  "appointment": {
+    "id": {{apptId}}, "clientId": {{clientId}},
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "whatever"
+  }
+}
+
+
+### 12. Event for an appointment we have never seen  → expect 202, acknowledged, no action
+POST {{host}}/api/patients/intake/klarity
+Content-Type: application/json
+Authorization: {{token}}
+
+{
+  "source": "klarity", "eventType": "appointment.no_show",
+  "appointment": {
+    "id": 999999999, "clientId": 888888,
+    "startAt": "2026-09-05T14:00:00Z", "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "patient-no-show"
+  }
+}
+
+
+###############################################################################
+# curl equivalents (bash)
+###############################################################################
+#
+# TOKEN='Bearer wwre2543tetewr3543r4werwer634266'
+# URL='http://localhost:8080/api/patients/intake/klarity'
+#
+# # 401 - no auth
+# curl -i -X POST "$URL" -H 'Content-Type: application/json' \
+#   -d '{"eventType":"appointment.created","appointment":{"id":"1"}}'
+#
+# # 201 - create
+# curl -i -X POST "$URL" -H 'Content-Type: application/json' -H "Authorization: $TOKEN" \
+#   -d '{"source":"klarity","eventType":"appointment.created","appointment":{"id":12345,"clientId":67890,"startAt":"2026-09-05T14:00:00Z","endAt":"2026-09-05T14:30:00Z","appointmentStatus":"scheduled","providerFirstName":"John","providerLastName":"Doe","reason":"Medication follow-up"},"patient":{"id":67890,"firstName":"Jane","lastName":"Doe","email":"jane@example.com","phone":"+15551234567","dob":"1990-01-15"},"meta":{"vendor":"klarity","trigger":"polling"}}'
+#
+# # 200 - no_show (minimal, no patient block)
+# curl -i -X POST "$URL" -H 'Content-Type: application/json' -H "Authorization: $TOKEN" \
+#   -d '{"source":"klarity","eventType":"appointment.no_show","appointment":{"id":12345,"clientId":67890,"startAt":"2026-09-05T14:00:00Z","endAt":"2026-09-05T14:30:00Z","appointmentStatus":"patient-no-show"}}'
+#
+# # 202 - unknown event
+# curl -i -X POST "$URL" -H 'Content-Type: application/json' -H "Authorization: $TOKEN" \
+#   -d '{"source":"klarity","eventType":"appointment.whatever","appointment":{"id":12345,"clientId":67890,"startAt":"2026-09-05T14:00:00Z","endAt":"2026-09-05T14:30:00Z","appointmentStatus":"x"}}'

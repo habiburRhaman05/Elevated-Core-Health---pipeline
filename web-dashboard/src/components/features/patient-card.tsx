@@ -207,20 +207,24 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
     }
   }
 
-  // One badge, priority order — a card is flagged, or stale, or unassigned,
-  // or (the calm default) just tagged with how it entered the pipeline.
+  // One state badge, priority order — a card is flagged, or stale, or
+  // unassigned, or (the calm default) fine.
   const headerBadge = patient.isFlagged
     ? { icon: Flag, label: "Flagged", cls: "bg-red-50 border-red-200 text-red-600" }
     : stale
       ? { icon: Clock, label: "Stale", cls: "bg-amber-50 border-amber-200 text-amber-700" }
       : !patient.assignedUser
         ? { icon: User, label: "Unassigned", cls: "bg-lime-50 border-lime-200 text-lime-700" }
-        : {
-            icon: Globe,
-            label: patient.source,
-            cls: "bg-blue-50 border-blue-100 text-blue-600",
-          }
+        : { icon: Check, label: "On track", cls: "bg-emerald-50 border-emerald-200 text-emerald-700" }
   const BadgeIcon = headerBadge.icon
+
+  // Where the patient came from. This used to be the last fallback of the badge
+  // above, which meant it only ever appeared on assigned, unflagged, non-stale
+  // cards — a webhook-created card was almost always "Unassigned" first, so the
+  // source never showed. It is its own chip now, so it is always visible.
+  // bookingPlatform is the more specific of the two (klarity/zocdoc/...) and
+  // wins; `source` (webhook/manual/import) is the fallback.
+  const originLabel = (patient.bookingPlatform || patient.source || "").replace(/_/g, " ")
 
   return (
     <div
@@ -279,6 +283,16 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
               <BadgeIcon className="w-3 h-3" fill={patient.isFlagged ? "currentColor" : "none"} />
               {headerBadge.label}
             </span>
+            {/* Origin chip — always shown, independent of the state badge above */}
+            {originLabel && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-50 border border-blue-100 text-blue-600"
+                title={`Source: ${patient.source}`}
+              >
+                <Globe className="w-3 h-3" />
+                {originLabel}
+              </span>
+            )}
             {/* Lock chip — only when the record is locked; nothing shows when unlocked */}
             {patient.isPrivate && (
               <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-300 text-amber-700">

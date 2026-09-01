@@ -1,7 +1,10 @@
+import type { NextFunction, Request, Response } from "express";
 import { Router } from "express";
 
 import { requireAuth, requireRole } from "@/middlewares/auth";
+import { requireKlarityToken } from "@/middlewares/klarityAuth";
 import { handleServiceResponse, validateRequest } from "@/utils/httpHandlers";
+import { logger } from "@/utils/logger";
 import { ServiceResponse } from "@/utils/serviceResponse";
 import { webhooksService } from "../webhooks/webhooks.service";
 import { patientsController } from "./patients.controller";
@@ -15,6 +18,7 @@ import {
 	DeleteNoteSchema,
 	FlagSchema,
 	IntakeSchema,
+	KlarityIntakeSchema,
 	NotesSchema,
 	StageMoveSchema,
 	UpdateAppointmentSchema,
@@ -31,10 +35,6 @@ export const patientsPublicRouter: Router = Router();
 // see webhooksService.getActiveSecret().
 patientsPublicRouter.post(
 	"/intake",
-	// Normalize the webhook body before validation: Make.com/Klarity may
-	// send patient fields nested inside an `opm` wrapper object, or as a
-	// flat body, or inside the outer object alongside `opm`. Flatten everything
-	// so the Zod schema sees a single flat object.
 	(req, _res, next) => {
 		const body = req.body;
 		console.log(JSON.stringify(body));
@@ -61,6 +61,41 @@ patientsPublicRouter.post(
 	},
 	validateRequest(IntakeSchema),
 	patientsController.intake,
+);
+
+
+function logKlarityWebhook(req: Request, res: Response, next: NextFunction): void {
+	const startedAt = Date.now();
+	logger.info(
+		{
+			method: req.method,
+			path: req.originalUrl,
+			ip: req.ip,
+			hasAuthHeader: Boolean(req.headers.authorization),
+			body: req.body,
+		},
+		"[Klarity webhook] request received",
+	);
+
+	const originalJson = res.json.bind(res);
+	res.json = (body: unknown) => {
+		logger.info(
+			{ statusCode: res.statusCode, durationMs: Date.now() - startedAt, response: body },
+			"[Klarity webhook] response sent",
+		);
+		return originalJson(body);
+	};
+
+	next();
+}
+
+
+patientsPublicRouter.post(
+	"/intake/klarity",
+	logKlarityWebhook,
+	requireKlarityToken,
+	validateRequest(KlarityIntakeSchema),
+	patientsController.intakeKlarity,
 );
 
 // All other patient routes require JWT auth

@@ -217,3 +217,119 @@ export type CheckEligibilityInput = z.infer<typeof CheckEligibilitySchema>["body
 export type UpdatePatientInput = z.infer<typeof UpdatePatientSchema>["body"];
 export type UpdateStatusInput = z.infer<typeof UpdateStatusSchema>["body"];
 export type UpdateAppointmentInput = z.infer<typeof UpdateAppointmentSchema>["body"];
+
+// --- Klarity webhook (POST /patients/intake/klarity) -----------------------
+// Klarity posts a nested envelope: { source, eventType, appointment, patient,
+// insurance, extra, meta }. Only `patient.firstName`/`lastName` and the
+// appointment's id/clientId/startAt/endAt/appointmentStatus are contractually
+// required; everything else is optional and may arrive as an explicit null.
+// The payload also carries self-describing `_required`/`_optional`/
+// `_notConfirmed` marker arrays — those are documentation, not data, so every
+// object below is non-strict and simply ignores them.
+
+/** Klarity sends numeric ids; accept either and normalize to string. */
+const klarityId = z.union([z.string().trim().min(1), z.number()]).transform((v) => String(v));
+
+/** Optional free-text that may arrive as null, "" or absent — all mean "no value". */
+const optionalText = (max: number) => z.string().trim().max(max).optional().nullable();
+
+/**
+ * The event types this endpoint acts on. Anything else is accepted and ignored
+ * (202) rather than rejected, so a new Klarity event type does not turn into a
+ * retry loop against a 4xx — see KLARITY_EVENT_TYPES usage in the service.
+ */
+export const KLARITY_EVENT_TYPES = [
+	"appointment.created",
+	"appointment.rescheduled",
+	"appointment.canceled",
+	"appointment.no_show",
+	"appointment.completed",
+] as const;
+
+export type KlarityEventType = (typeof KLARITY_EVENT_TYPES)[number];
+
+export const KlarityIntakeSchema = z.object({
+	body: z.object({
+		source: z.string().trim().optional().nullable(),
+		// Kept as a free string, not an enum: an unrecognized event must reach the
+		// service (which no-ops on it) instead of failing validation with a 400.
+		eventType: z.string().trim().min(1, "eventType is required"),
+		eventTimestamp: z.string().trim().optional().nullable(),
+
+		appointment: z.object({
+			id: klarityId,
+			clientId: klarityId.optional().nullable(),
+			// Required on every documented event, including the minimal
+			// no_show/completed payloads.
+			startAt: z.string().trim().min(1, "appointment.startAt is required"),
+			endAt: z.string().trim().min(1, "appointment.endAt is required"),
+			appointmentStatus: z.string().trim().min(1, "appointment.appointmentStatus is required"),
+			appointmentName: optionalText(200),
+			contactType: optionalText(50),
+			serviceType: optionalText(100),
+			serviceItemId: klarityId.optional().nullable(),
+			serviceSpecialty: optionalText(100),
+			providerFirstName: optionalText(100),
+			providerLastName: optionalText(100),
+			// Operational reason for the visit only — mapped to problemDescription,
+			// the same field the existing intake and Add Patient form write to.
+			reason: optionalText(2000),
+			notes: optionalText(2000),
+			intakeFormStatus: optionalText(50),
+		}),
+
+		// Optional at this layer because the lifecycle events (no_show, completed)
+		// send an appointment-only payload with no patient block at all — those
+		// resolve the existing record by appointment id instead. The service
+		// enforces that appointment.created DOES carry a patient.
+		patient: z
+			.object({
+				id: klarityId.optional().nullable(),
+				firstName: z.string().trim().min(1, "patient.firstName is required").max(100),
+				lastName: optionalText(100),
+				preferredName: optionalText(100),
+				// Klarity may send "" for a patient with no email on file; treat that
+				// as absent rather than failing the whole webhook on a format error.
+				email: z.preprocess(
+					(v) => (typeof v === "string" && v.trim() === "" ? null : v),
+					z.string().trim().email().optional().nullable(),
+				),
+				phone: optionalText(50),
+				dob: optionalText(50),
+				gender: optionalText(50),
+				type: optionalText(50),
+				status: optionalText(50),
+			})
+			.optional()
+			.nullable(),
+
+		insurance: z
+			.object({
+				primaryPayer: optionalText(200),
+				memberId: optionalText(100),
+				groupNumber: optionalText(100),
+				planName: optionalText(200),
+			})
+			.optional()
+			.nullable(),
+
+		extra: z
+			.object({
+				location: optionalText(200),
+				address: optionalText(300),
+			})
+			.optional()
+			.nullable(),
+
+		meta: z
+			.object({
+				vendor: optionalText(100),
+				trigger: optionalText(100),
+				syncVersion: optionalText(50),
+			})
+			.optional()
+			.nullable(),
+	}),
+});
+
+export type KlarityIntakeInput = z.infer<typeof KlarityIntakeSchema>["body"];

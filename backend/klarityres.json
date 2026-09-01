@@ -1,0 +1,183 @@
+// New booking payload 
+
+{
+  "source": "klarity",
+  "eventType": "appointment.created",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": 12345,
+    "appointmentName": "Follow-up Visit",
+    "clientId": 67890,
+    "startAt": "2026-09-05T14:00:00Z",
+    "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "scheduled",
+    "contactType": "video",
+    "serviceType": "Follow-up",
+    "serviceItemId": 222,
+    "serviceSpecialty": "Psychiatry",
+    "providerFirstName": "John",
+    "providerLastName": "Doe",
+    "reason": "Medication follow-up",
+    "notes": null,
+    "intakeFormStatus": "COMPLETE"
+  },
+  "patient": {
+    "id": 67890,
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "preferredName": null,
+    "email": "jane@example.com",
+    "phone": "+15551234567",
+    "dob": "1990-01-15",
+    "gender": "Female",
+    "type": "patient",
+    "status": "Active"
+  },
+  "insurance": {
+    "primaryPayer": null,
+    "memberId": null,
+    "groupNumber": null,
+    "planName": null
+  },
+  "extra": {
+    "location": null,
+    "address": null
+  },
+  "meta": {
+    "vendor": "klarity",
+    "trigger": "polling",
+    "syncVersion": "1.0"
+  }
+}
+
+
+// Rescheduled appointment
+
+{
+  "source": "klarity",
+  "eventType": "appointment.rescheduled",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": 12345,
+    "appointmentName": "Follow-up Visit",
+    "clientId": 67890,
+    "startAt": "2026-09-06T16:00:00Z",
+    "endAt": "2026-09-06T16:30:00Z",
+    "appointmentStatus": "scheduled",
+    "contactType": "video",
+    "serviceType": "Follow-up",
+    "serviceItemId": 222,
+    "serviceSpecialty": "Psychiatry",
+    "providerFirstName": "John",
+    "providerLastName": "Doe",
+    "reason": "Medication follow-up",
+    "notes": null,
+    "intakeFormStatus": "COMPLETE"
+  },
+  "patient": {
+    "id": 67890,
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "preferredName": null,
+    "email": "jane@example.com",
+    "phone": "+15551234567",
+    "dob": "1990-01-15",
+    "gender": "Female",
+    "type": "patient",
+    "status": "Active"
+  },
+  "insurance": {
+    "primaryPayer": null,
+    "memberId": null,
+    "groupNumber": null,
+    "planName": null
+  },
+  "extra": {
+    "location": null,
+    "address": null
+  },
+  "meta": {
+    "vendor": "klarity",
+    "trigger": "polling",
+    "syncVersion": "1.0"
+  }
+}
+
+
+//  Canceled appointment 
+{
+  "source": "klarity",
+  "eventType": "appointment.canceled",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": 12345,
+    "appointmentName": "Follow-up Visit",
+    "clientId": 67890,
+    "startAt": "2026-09-05T14:00:00Z",
+    "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "canceled",
+    "contactType": "video",
+    "serviceType": "Follow-up",
+    "serviceItemId": 222,
+    "serviceSpecialty": "Psychiatry",
+    "providerFirstName": "John",
+    "providerLastName": "Doe",
+    "reason": "Medication follow-up",
+    "notes": null,
+    "intakeFormStatus": "COMPLETE"
+  },
+  "patient": {
+    "id": 67890,
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "preferredName": null,
+    "email": "jane@example.com",
+    "phone": "+15551234567",
+    "dob": "1990-01-15",
+    "gender": "Female",
+    "type": "patient",
+    "status": "Active"
+  },
+  "insurance": {
+    "primaryPayer": null,
+    "memberId": null,
+    "groupNumber": null,
+    "planName": null
+  },
+  "extra": {
+    "location": null,
+    "address": null
+  },
+  "meta": {
+    "vendor": "klarity",
+    "trigger": "polling",
+    "syncVersion": "1.0"
+  }
+}
+// 4) Optional later: no-show
+{
+  "source": "klarity",
+  "eventType": "appointment.no_show",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": 12345,
+    "clientId": 67890,
+    "startAt": "2026-09-05T14:00:00Z",
+    "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "patient-no-show"
+  }
+}
+
+// 5) Optional later: completed
+{
+  "source": "klarity",
+  "eventType": "appointment.completed",
+  "eventTimestamp": "2026-09-01T03:47:00Z",
+  "appointment": {
+    "id": 12345,
+    "clientId": 67890,
+    "startAt": "2026-09-05T14:00:00Z",
+    "endAt": "2026-09-05T14:30:00Z",
+    "appointmentStatus": "showed"
+  }
+}

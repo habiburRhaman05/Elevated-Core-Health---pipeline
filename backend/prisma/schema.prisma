@@ -151,56 +151,64 @@ model User {
 }
 
 model Patient {
-  id                   String            @id @default(uuid())
+  id                     String            @id @default(uuid())
   // firstName/lastName are the source of truth — the legacy single `name`
   // column was dropped (migration backfilled first/last from it). The API
   // still returns a computed `name` (full name) so existing display code
   // keeps working; it is never stored.
-  firstName            String            @map("first_name")
-  lastName             String?           @map("last_name")
-  location             String?
-  email                String?
-  phone                String?
-  dateOfBirth          DateTime?         @map("date_of_birth") @db.Date
-  stage                String            @default("onboarding")
-  stageRef             Stage?            @relation(fields: [stage], references: [key], onDelete: Restrict)
-  status               PatientStatus     @default(active)
-  visitStatus          VisitStatus       @default(not_visited) @map("visit_status")
-  assignedTo           String?           @map("assigned_to")
-  notes                String?
-  checklistState       Json              @default("{}") @map("checklist_state")
-  isFlagged            Boolean           @default(false) @map("is_flagged")
-  flagReason           String?           @map("flag_reason")
-  flaggedById          String?           @map("flagged_by")
-  flaggedAt            DateTime?         @map("flagged_at")
-  flagClearedReason    String?           @map("flag_cleared_reason")
-  flagClearedById      String?           @map("flag_cleared_by")
-  flagClearedAt        DateTime?         @map("flag_cleared_at")
-  completedAt          DateTime?         @map("completed_at")
-  cancelledAt          DateTime?         @map("cancelled_at")
-  cancelledById        String?           @map("cancelled_by")
-  cancelledReason      String?           @map("cancelled_reason")
-  source               String            @default("manual")
-  createdById          String?           @map("created_by")
-  bookingPlatform      String?           @map("booking_platform")
-  appointmentDatetime  DateTime?         @map("appointment_datetime")
-  problemDescription   String?           @map("problem_description")
-  paymentMethod        String?           @map("payment_method")
-  insuranceProvider    String?           @map("insurance_provider")
-  paymentDetails       Json?             @map("payment_details")
-  copayAmount          Decimal?          @map("copay_amount") @db.Decimal(10, 2)
-  amountPaid           Decimal?          @map("amount_paid") @db.Decimal(10, 2)
-  eligibilityStatus    EligibilityStatus @default(not_checked) @map("eligibility_status")
-  eligibilityCheckedAt DateTime?         @map("eligibility_checked_at")
-  eligibilityDetails   Json?             @map("eligibility_details")
-  eligibilityReason    String?           @map("eligibility_reason")
-  isPrivate            Boolean           @default(false) @map("is_private")
-  privateLockedById    String?           @map("private_locked_by")
-  privateLockedAt      DateTime?         @map("private_locked_at")
-  importBatchId        String?           @map("import_batch_id")
-  updatedAt            DateTime          @default(now()) @updatedAt @map("updated_at")
-  updatedById          String?           @map("updated_by")
-  createdAt            DateTime          @default(now()) @map("created_at")
+  firstName              String            @map("first_name")
+  lastName               String?           @map("last_name")
+  location               String?
+  email                  String?
+  phone                  String?
+  dateOfBirth            DateTime?         @map("date_of_birth") @db.Date
+  stage                  String            @default("onboarding")
+  stageRef               Stage?            @relation(fields: [stage], references: [key], onDelete: Restrict)
+  status                 PatientStatus     @default(active)
+  visitStatus            VisitStatus       @default(not_visited) @map("visit_status")
+  assignedTo             String?           @map("assigned_to")
+  notes                  String?
+  checklistState         Json              @default("{}") @map("checklist_state")
+  isFlagged              Boolean           @default(false) @map("is_flagged")
+  flagReason             String?           @map("flag_reason")
+  flaggedById            String?           @map("flagged_by")
+  flaggedAt              DateTime?         @map("flagged_at")
+  flagClearedReason      String?           @map("flag_cleared_reason")
+  flagClearedById        String?           @map("flag_cleared_by")
+  flagClearedAt          DateTime?         @map("flag_cleared_at")
+  completedAt            DateTime?         @map("completed_at")
+  cancelledAt            DateTime?         @map("cancelled_at")
+  cancelledById          String?           @map("cancelled_by")
+  cancelledReason        String?           @map("cancelled_reason")
+  source                 String            @default("manual")
+  createdById            String?           @map("created_by")
+  bookingPlatform        String?           @map("booking_platform")
+  appointmentDatetime    DateTime?         @map("appointment_datetime")
+  // End of the booked slot. Klarity sends a real endAt; other sources leave it
+  // null and the calendar falls back to its own default slot length.
+  appointmentEndDatetime DateTime?         @map("appointment_end_datetime")
+  // Vendor-side ids (Klarity clientId / appointment id). Kept so a polling
+  // integration that re-sends the same appointment updates instead of
+  // duplicating. Null for manual and email-parsed intake.
+  externalPatientId      String?           @map("external_patient_id")
+  externalAppointmentId  String?           @map("external_appointment_id")
+  problemDescription     String?           @map("problem_description")
+  paymentMethod          String?           @map("payment_method")
+  insuranceProvider      String?           @map("insurance_provider")
+  paymentDetails         Json?             @map("payment_details")
+  copayAmount            Decimal?          @map("copay_amount") @db.Decimal(10, 2)
+  amountPaid             Decimal?          @map("amount_paid") @db.Decimal(10, 2)
+  eligibilityStatus      EligibilityStatus @default(not_checked) @map("eligibility_status")
+  eligibilityCheckedAt   DateTime?         @map("eligibility_checked_at")
+  eligibilityDetails     Json?             @map("eligibility_details")
+  eligibilityReason      String?           @map("eligibility_reason")
+  isPrivate              Boolean           @default(false) @map("is_private")
+  privateLockedById      String?           @map("private_locked_by")
+  privateLockedAt        DateTime?         @map("private_locked_at")
+  importBatchId          String?           @map("import_batch_id")
+  updatedAt              DateTime          @default(now()) @updatedAt @map("updated_at")
+  updatedById            String?           @map("updated_by")
+  createdAt              DateTime          @default(now()) @map("created_at")
 
   assignedUser        User?        @relation("PatientAssignedTo", fields: [assignedTo], references: [id])
   createdByUser       User?        @relation("PatientCreatedBy", fields: [createdById], references: [id])
@@ -216,11 +224,13 @@ model Patient {
   patientNotes     PatientNote[]     @relation("PatientNotes")
   smsConversations SmsConversation[]
 
+  @@unique([externalAppointmentId])
   @@index([stage])
   @@index([isFlagged])
   @@index([updatedAt])
   @@index([status])
   @@index([appointmentDatetime])
+  @@index([externalPatientId])
   @@index([isPrivate])
   @@map("patients")
 }
