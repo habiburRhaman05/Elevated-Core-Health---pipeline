@@ -491,6 +491,44 @@ model CrmIntegration {
   @@map("crm_integrations")
 }
 
+enum WebhookLogDirection {
+  request
+  response
+}
+
+/**
+ * Durable record of every webhook hit (Optimantra's /intake and Klarity's
+ * /intake/klarity) — the raw request body exactly as received, and the
+ * response sent back. Written from webhookPayloadLogger in
+ * @/utils/webhookLogger.ts.
+ * Lives in Postgres rather than a log file specifically because this backend
+ * deploys to Vercel as a serverless function — Vercel's filesystem is
+ * ephemeral/read-only outside `/tmp` and not shared across invocations, so a
+ * file written during one request is gone (or never written at all) by the
+ * next. A DB row survives every deploy and is queryable the same way in dev
+ * and production.
+ * Deliberately has NO foreign key to Patient: a rejected webhook (bad auth,
+ * failed validation) never creates a patient at all, and this table's whole
+ * purpose is to capture those cases too — a required relation to a row that
+ * may not exist would defeat that.
+ */
+model WebhookLog {
+  id         String              @id @default(uuid())
+  source     String
+  direction  WebhookLogDirection
+  method     String
+  path       String
+  ip         String?
+  statusCode Int?                @map("status_code")
+  durationMs Int?                @map("duration_ms")
+  payload    Json
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  @@index([source])
+  @@index([createdAt])
+  @@map("webhook_logs")
+}
+
 /**
  * Application-wide settings (key-value pairs).
  * Used for configurable thresholds like stale card detection time.

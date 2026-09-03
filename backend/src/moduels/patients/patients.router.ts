@@ -1,11 +1,10 @@
-import type { NextFunction, Request, Response } from "express";
 import { Router } from "express";
 
 import { requireAuth, requireRole } from "@/middlewares/auth";
 import { requireKlarityToken } from "@/middlewares/klarityAuth";
 import { handleServiceResponse, validateRequest } from "@/utils/httpHandlers";
-import { logger } from "@/utils/logger";
 import { ServiceResponse } from "@/utils/serviceResponse";
+import { webhookPayloadLogger } from "@/utils/webhookLogger";
 import { webhooksService } from "../webhooks/webhooks.service";
 import { patientsController } from "./patients.controller";
 import {
@@ -33,16 +32,17 @@ export const patientsPublicRouter: Router = Router();
 // The secret is DB-backed (rotatable from Admin → Settings → Webhooks) and
 // falls back to the static WEBHOOK_SECRET env var until the first rotation —
 // see webhooksService.getActiveSecret().
+//
+// webhookPayloadLogger runs FIRST, before the opm-flattening below, so
+// `logs/webhooks/` always holds the payload exactly as Optimantra/Make.com
+// sent it on the wire — not our own normalized version of it. It also logs
+// the response, and runs before validation so even a rejected request is
+// captured (see its own doc comment in @/utils/webhookLogger).
 patientsPublicRouter.post(
 	"/intake",
+	webhookPayloadLogger("optimantra"),
 	(req, _res, next) => {
 		const body = req.body;
-		console.log(JSON.stringify(body));
-		console.log("row dara");
-		
-		console.log(body);
-		
-		
 		if (body && typeof body === "object") {
 			// Case 1: Body is { opm: { firstName, lastName, ... }, email, status, ... }
 			// The `opm` key holds the primary patient data from Klarity/Optimantra.
@@ -63,36 +63,17 @@ patientsPublicRouter.post(
 	patientsController.intake,
 );
 
-
-function logKlarityWebhook(req: Request, res: Response, next: NextFunction): void {
-	const startedAt = Date.now();
-	logger.info(
-		{
-			method: req.method,
-			path: req.originalUrl,
-			ip: req.ip,
-			hasAuthHeader: Boolean(req.headers.authorization),
-			body: req.body,
-		},
-		"[Klarity webhook] request received",
-	);
-
-	const originalJson = res.json.bind(res);
-	res.json = (body: unknown) => {
-		logger.info(
-			{ statusCode: res.statusCode, durationMs: Date.now() - startedAt, response: body },
-			"[Klarity webhook] response sent",
-		);
-		return originalJson(body);
-	};
-
-	next();
-}
-
-
+// Klarity appointment webhook. Unlike /intake (shared secret header) this one
+// is authenticated with a static bearer token on the Authorization header, and
+// takes Klarity's nested envelope shape rather than a flat body.
+//
+// webhookPayloadLogger runs before requireKlarityToken so a request is logged
+// (and thus auditable/debuggable) even when auth or validation rejects it —
+// this is also what let us read the exact raw `startAt` string Klarity sent,
+// settling whether it was truly UTC or local-time-with-a-Z appended.
 patientsPublicRouter.post(
 	"/intake/klarity",
-	logKlarityWebhook,
+	webhookPayloadLogger("klarity"),
 	requireKlarityToken,
 	validateRequest(KlarityIntakeSchema),
 	patientsController.intakeKlarity,
