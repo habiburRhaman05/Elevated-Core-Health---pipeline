@@ -105,3 +105,77 @@ export function uploadInternalMessageAttachment(
 		stream.end(buffer);
 	});
 }
+
+export interface UploadedDocument {
+	url: string;
+	publicId: string;
+	resourceType: "image" | "video" | "raw";
+}
+
+/**
+ * Uploads a file to the Document Storage feature. Same "never touch the
+ * original bytes" posture as uploadInternalMessageAttachment — a stored
+ * business document must round-trip byte-for-byte, so no transformation is
+ * applied regardless of resourceType.
+ *
+ * folderId is nested into the Cloudinary path (not just Postgres) so the
+ * asset organization on Cloudinary's own side mirrors the folder tree a
+ * user sees in the app — useful for anyone auditing directly in the
+ * Cloudinary console. "root" is used for documents with no folderId
+ * (the "Uncategorized" view).
+ */
+export function uploadDocument(
+	buffer: Buffer,
+	fileName: string,
+	resourceType: "image" | "video" | "raw",
+	folderId: string | null,
+): Promise<UploadedDocument> {
+	return new Promise((resolve, reject) => {
+		const stream = cloudinary.uploader.upload_stream(
+			{
+				folder: `ech-pipeline/documents/${folderId ?? "root"}`,
+				resource_type: resourceType,
+				filename_override: fileName,
+				use_filename: true,
+				unique_filename: true,
+			},
+			(error, result) => {
+				if (error || !result) {
+					reject(error ?? new Error("Cloudinary upload returned no result"));
+					return;
+				}
+				resolve({ url: result.secure_url, publicId: result.public_id, resourceType });
+			},
+		);
+		stream.end(buffer);
+	});
+}
+
+/**
+ * Deletes the underlying Cloudinary asset for a document. Called BEFORE the
+ * DB row is deleted (see documents.service.ts) — if this fails, the row stays
+ * so the orphaned asset can be found and cleaned up rather than silently
+ * losing track of it. `resourceType` must match what the asset was uploaded
+ * with; Cloudinary's destroy() looks in the wrong bucket otherwise and
+ * reports a false "not found".
+ */
+export function deleteDocument(publicId: string, resourceType: "image" | "video" | "raw"): Promise<void> {
+	return new Promise((resolve, reject) => {
+		cloudinary.uploader.destroy(publicId, { resource_type: resourceType }, (error, result) => {
+			if (error) {
+				reject(error);
+				return;
+			}
+			// Cloudinary returns { result: "ok" } on success and { result: "not found" }
+			// for an id that doesn't exist — treat "not found" as success too, since
+			// the end state (asset gone) is identical and this call may be retrying
+			// a delete whose Cloudinary side already succeeded but whose DB delete
+			// failed.
+			if (result?.result !== "ok" && result?.result !== "not found") {
+				reject(new Error(`Cloudinary destroy returned unexpected result: ${result?.result}`));
+				return;
+			}
+			resolve();
+		});
+	});
+}

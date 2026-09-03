@@ -121,22 +121,26 @@ model User {
   createdById          String?    @map("created_by")
   createdAt            DateTime   @default(now()) @map("created_at")
 
-  assignedPatients      Patient[]        @relation("PatientAssignedTo")
-  createdPatients       Patient[]        @relation("PatientCreatedBy")
-  flaggedPatients       Patient[]        @relation("PatientFlaggedBy")
-  flagClearedPatients   Patient[]        @relation("PatientFlagClearedBy")
-  flagsRaised           PatientFlag[]    @relation("FlagRaisedBy")
-  flagsCleared          PatientFlag[]    @relation("FlagClearedBy")
-  notesCreated          PatientNote[]    @relation("PatientNotesCreatedBy")
-  updatedPatients       Patient[]        @relation("PatientUpdatedBy")
-  cancelledPatients     Patient[]        @relation("PatientCancelledBy")
-  privateLockedPatients Patient[]        @relation("PatientPrivateLockedBy")
-  refreshTokens         RefreshToken[]
-  activityLogs          ActivityLog[]    @relation("ActivityLogActor")
-  importBatches         ImportBatch[]    @relation("ImportBatchImportedBy")
-  crmIntegrations       CrmIntegration[]
-  appSettingsUpdated    AppSetting[]
-  sentSmsMessages       SmsMessage[]
+  assignedPatients       Patient[]        @relation("PatientAssignedTo")
+  createdPatients        Patient[]        @relation("PatientCreatedBy")
+  flaggedPatients        Patient[]        @relation("PatientFlaggedBy")
+  flagClearedPatients    Patient[]        @relation("PatientFlagClearedBy")
+  flagsRaised            PatientFlag[]    @relation("FlagRaisedBy")
+  flagsCleared           PatientFlag[]    @relation("FlagClearedBy")
+  notesCreated           PatientNote[]    @relation("PatientNotesCreatedBy")
+  updatedPatients        Patient[]        @relation("PatientUpdatedBy")
+  cancelledPatients      Patient[]        @relation("PatientCancelledBy")
+  privateLockedPatients  Patient[]        @relation("PatientPrivateLockedBy")
+  refreshTokens          RefreshToken[]
+  activityLogs           ActivityLog[]    @relation("ActivityLogActor")
+  importBatches          ImportBatch[]    @relation("ImportBatchImportedBy")
+  crmIntegrations        CrmIntegration[]
+  appSettingsUpdated     AppSetting[]
+  sentSmsMessages        SmsMessage[]
+  permissions            UserPermission[] @relation("UserPermissionOwner")
+  permissionsGranted     UserPermission[] @relation("UserPermissionGrantedBy")
+  documentFoldersCreated DocumentFolder[] @relation("DocumentFolderCreatedBy")
+  documentsUploaded      Document[]       @relation("DocumentUploadedBy")
 
   // Link Internal Board (VA/Admin staff chat) — fully separate from the
   // patient-SMS models above; no FK crosses between the two feature areas.
@@ -148,6 +152,39 @@ model User {
   createdUsers  User[] @relation("UserCreatedBy")
 
   @@map("users")
+}
+
+/**
+ * Per-VA, per-action permission grant — sits BELOW the existing role system,
+ * not instead of it. Roles (super_admin/admin/va) decide staff vs. owner;
+ * this decides which specific patient-workflow actions a given VA may take
+ * (e.g. Jude can move stages but not edit appointment dates).
+ * DEFAULT DIRECTION IS DELIBERATE: a permission with NO row here for a user
+ * counts as GRANTED (see requirePermission() in @/middlewares/permissions.ts).
+ * This is opt-out, not opt-in — on the day this ships, every VA keeps doing
+ * exactly what they do today; Donna then dials back specific things per VA.
+ * Flipping this to deny-by-default would silently lock out both VAs from
+ * everything the moment this table exists, which is not an acceptable
+ * default for a live clinic mid-shift.
+ * admin/super_admin are never subject to this table at all (requirePermission
+ * short-circuits for them) — it only ever restricts VAs.
+ */
+model UserPermission {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  // One of PERMISSION_KEYS in @/config/vaPermissions.ts. Not an enum: the
+  // catalog is expected to grow (documents, future modules) without a
+  // migration each time.
+  permissionKey String   @map("permission_key")
+  granted       Boolean  @default(true)
+  updatedById   String?  @map("updated_by")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user          User  @relation("UserPermissionOwner", fields: [userId], references: [id], onDelete: Cascade)
+  updatedByUser User? @relation("UserPermissionGrantedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, permissionKey])
+  @@map("user_permissions")
 }
 
 model Patient {
@@ -228,6 +265,7 @@ model Patient {
   patientNotes       PatientNote[]        @relation("PatientNotes")
   smsConversations   SmsConversation[]
   appointmentHistory AppointmentHistory[]
+  documents          Document[]
 
   @@index([stage])
   @@index([isFlagged])
@@ -527,6 +565,68 @@ model WebhookLog {
   @@index([source])
   @@index([createdAt])
   @@map("webhook_logs")
+}
+
+/**
+ * A folder in the document storage tree. Self-referencing for nesting;
+ * `parentFolderId: null` means a root-level folder. Cascade-deletes its
+ * children AND its documents (see Document.folder's onDelete) when the
+ * folder itself is deleted — the service layer still blocks deleting a
+ * non-empty folder by default (see documents.service.ts), this cascade is
+ * only what fires on the explicit "delete folder and everything in it"
+ * confirmation path.
+ */
+model DocumentFolder {
+  id             String   @id @default(uuid())
+  name           String
+  parentFolderId String?  @map("parent_folder_id")
+  createdById    String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  parent    DocumentFolder?  @relation("FolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  children  DocumentFolder[] @relation("FolderTree")
+  createdBy User?            @relation("DocumentFolderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  documents Document[]
+
+  @@index([parentFolderId])
+  @@map("document_folders")
+}
+
+/**
+ * One uploaded file, stored on Cloudinary — this row is the metadata/browse
+ * layer, the actual bytes never touch our own disk or database (same
+ * pattern as InternalAttachment).
+ * `folderId: null` = sits in the "Uncategorized" root view, not orphaned —
+ * still fully manageable, just not filed into a folder yet.
+ * `patientId: null` = a general clinic document (SOP, blank consent form, ...)
+ * visible to all staff. A non-null patientId ties it to that patient's record
+ * and the EXISTING patient-scope rule then applies (a VA only sees it if that
+ * patient is in their own scope) — documents are not a backdoor around that
+ * rule.
+ */
+model Document {
+  id                 String   @id @default(uuid())
+  folderId           String?  @map("folder_id")
+  patientId          String?  @map("patient_id")
+  fileName           String   @map("file_name")
+  mimeType           String   @map("mime_type")
+  sizeBytes          Int      @map("size_bytes")
+  cloudinaryPublicId String   @map("cloudinary_public_id")
+  // Mirrors Cloudinary's own resource_type bucket ("image" | "video" | "raw")
+  // — needed again at delete time, since Cloudinary's destroy() call requires it.
+  resourceType       String   @map("resource_type")
+  url                String
+  uploadedById       String?  @map("uploaded_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  folder     DocumentFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  patient    Patient?        @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  uploadedBy User?           @relation("DocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([folderId])
+  @@index([patientId])
+  @@map("documents")
 }
 
 /**

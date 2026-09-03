@@ -32,6 +32,38 @@ export interface User {
   assignedPatientCount?: number
 }
 
+/**
+ * Per-VA permission catalog — matches backend/src/config/vaPermissions.ts
+ * exactly. Distinct from `role` (admin/va): this is a per-INDIVIDUAL-VA
+ * layer underneath the role — two VAs can have different grants.
+ */
+export type VaPermissionKey =
+  | "patient.stage.update"
+  | "patient.info.update"
+  | "patient.checklist.update"
+  | "patient.appointment.update"
+  | "patient.notes.manage"
+  | "patient.flag.raise"
+  | "patient.documents.upload"
+  | "patient.documents.delete"
+
+/** One catalog entry with its current effective grant — backs the permission-vault UI. */
+export interface VaPermissionView {
+  key: VaPermissionKey
+  label: string
+  description: string
+  group: string
+  granted: boolean
+}
+
+export interface VaPermissionsResponse {
+  user: Pick<User, "id" | "name" | "role">
+  permissions: VaPermissionView[]
+}
+
+/** A user's own effective grants — every key present, admin/super_admin always all `true`. Used to hide/disable buttons a VA can't currently use. */
+export type EffectivePermissionMap = Record<VaPermissionKey, boolean>
+
 export type ChecklistStatus = "required" | "optional"
 
 export type EligibilityStatus = "not_checked" | "eligible" | "not_eligible"

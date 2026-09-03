@@ -22,6 +22,7 @@ import { cn, getInitials } from "@/lib/utils"
 import { formatPatientDateTime } from "@/lib/clinic-time"
 import { STALE_HOURS } from "@/constants"
 import { useChecklistItems, useListVas, useAssignPatient } from "@/hooks/query/usePatients"
+import { useMyPermissions } from "@/hooks/query/usePermissions"
 import { useStageMeta } from "@/hooks/query/useStages"
 import { useAuth } from "@/hooks/auth/useAuth"
 import { isAdminOrAbove } from "@/lib/roles"
@@ -166,9 +167,12 @@ export function PatientCard({ patient, onMoveStage, onClick, isDragging, onDragS
   const [expanded, setExpanded] = useState(false)
   // Which direction's move is in flight — shows a spinner on that button.
   const [moving, setMoving] = useState<"back" | "next" | null>(null)
-  // Phase 3 shared editing: board is open - any VA or admin can move any patient.
+  // Phase 3 shared editing: board is open - any VA or admin can move any patient,
+  // gated only by the per-VA permission vault (admins always pass — see
+  // useMyPermissions/hasPermission's admin bypass on the backend).
   const isAdmin = isAdminOrAbove(currentUser?.role)
-  const canMoveStage = true
+  const { data: myPermissions } = useMyPermissions()
+  const canMoveStage = myPermissions?.["patient.stage.update"] ?? true
 
   // - Checklist progress for this stage (only REQUIRED items gate moves) -
   const stageDefs = checklistDefs?.filter((d) => d.stage === patient.stage) || []

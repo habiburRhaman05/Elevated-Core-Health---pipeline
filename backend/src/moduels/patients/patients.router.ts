@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import { requireAuth, requireRole } from "@/middlewares/auth";
 import { requireKlarityToken } from "@/middlewares/klarityAuth";
+import { requireVaPermission } from "@/middlewares/vaPermissions";
 import { handleServiceResponse, validateRequest } from "@/utils/httpHandlers";
 import { ServiceResponse } from "@/utils/serviceResponse";
 import { webhookPayloadLogger } from "@/utils/webhookLogger";
@@ -88,11 +89,21 @@ patientsRouter.post("/", validateRequest(CreatePatientSchema), patientsControlle
 patientsRouter.get("/checklist-items", patientsController.listChecklistItems);
 patientsRouter.get("/:id", patientsController.getById);
 patientsRouter.get("/:id/appointment-history", patientsController.getAppointmentHistory);
-patientsRouter.patch("/:id/stage", validateRequest(StageMoveSchema), patientsController.moveStage);
+patientsRouter.patch(
+	"/:id/stage",
+	requireVaPermission("patient.stage.update"),
+	validateRequest(StageMoveSchema),
+	patientsController.moveStage,
+);
 // Reassigning a patient to an arbitrary user is admin/super_admin only (task.md §17: "Reassign patients" — VA: No).
 // A VA claiming an unassigned patient for themselves is a separate, narrower action — see POST /:id/claim below.
 patientsRouter.patch("/:id/assign", requireRole("admin"), validateRequest(AssignSchema), patientsController.assign);
-patientsRouter.patch("/:id", validateRequest(UpdatePatientSchema), patientsController.updatePatient);
+patientsRouter.patch(
+	"/:id",
+	requireVaPermission("patient.info.update"),
+	validateRequest(UpdatePatientSchema),
+	patientsController.updatePatient,
+);
 patientsRouter.post("/:id/lock", patientsController.lockPatient);
 patientsRouter.post("/:id/unlock", patientsController.unlockPatient);
 patientsRouter.patch(
@@ -101,15 +112,36 @@ patientsRouter.patch(
 	validateRequest(UpdateStatusSchema),
 	patientsController.updateStatus,
 );
-patientsRouter.patch("/:id/checklist", validateRequest(ChecklistToggleSchema), patientsController.toggleChecklist);
-patientsRouter.post("/:id/notes", validateRequest(NotesSchema), patientsController.createNote);
-patientsRouter.delete("/:id/notes/:noteId", validateRequest(DeleteNoteSchema), patientsController.deleteNote);
+patientsRouter.patch(
+	"/:id/checklist",
+	requireVaPermission("patient.checklist.update"),
+	validateRequest(ChecklistToggleSchema),
+	patientsController.toggleChecklist,
+);
+patientsRouter.post(
+	"/:id/notes",
+	requireVaPermission("patient.notes.manage"),
+	validateRequest(NotesSchema),
+	patientsController.createNote,
+);
+patientsRouter.delete(
+	"/:id/notes/:noteId",
+	requireVaPermission("patient.notes.manage"),
+	validateRequest(DeleteNoteSchema),
+	patientsController.deleteNote,
+);
 patientsRouter.patch(
 	"/:id/appointment",
+	requireVaPermission("patient.appointment.update"),
 	validateRequest(UpdateAppointmentSchema),
 	patientsController.updateAppointment,
 );
-patientsRouter.post("/:id/flag", validateRequest(FlagSchema), patientsController.flag);
+patientsRouter.post(
+	"/:id/flag",
+	requireVaPermission("patient.flag.raise"),
+	validateRequest(FlagSchema),
+	patientsController.flag,
+);
 patientsRouter.post(
 	"/:id/check-eligibility",
 	validateRequest(CheckEligibilitySchema),

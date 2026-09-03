@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { useAdminUsers, useCreateUser, useUpdateUser, useDeleteUser } from "@/hooks/query/useAdmin"
 import { useAuth } from "@/hooks/auth/useAuth"
-import { Loader2, Plus, Pencil, Trash2, Shield, ShieldCheck, AlertTriangle, User as UserIcon, Users, Clock, Eye, EyeOff } from "lucide-react"
+import { Loader2, Plus, Pencil, Trash2, Shield, ShieldCheck, AlertTriangle, User as UserIcon, Users, Clock, Eye, EyeOff, KeyRound } from "lucide-react"
+import { PermissionsVaultModal } from "@/components/features/permissions-vault-modal"
 import { Button } from "@/components/ui/button"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -33,6 +34,7 @@ export default function AdminUsersPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [permissionsUser, setPermissionsUser] = useState<User | null>(null)
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1)
   const [typedDeleteText, setTypedDeleteText] = useState("")
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -254,6 +256,15 @@ export default function AdminUsersPage() {
                     </span>
                   ) : (
                     <>
+                      {user.role === "va" && (
+                        <button
+                          onClick={() => setPermissionsUser(user)}
+                          className="p-2 rounded-lg border border-transparent hover:border-[#E5E7EB] hover:bg-[#EBF7EC] text-[#6B7280] hover:text-[#036638] transition-colors"
+                          title="Manage permissions"
+                        >
+                          <KeyRound className="w-4 h-4" />
+                        </button>
+                      )}
                       <button
                         onClick={() => openEdit(user)}
                         className="p-2 rounded-lg border border-transparent hover:border-[#E5E7EB] hover:bg-[#EBF7EC] text-[#6B7280] hover:text-[#036638] transition-colors"
@@ -595,6 +606,12 @@ export default function AdminUsersPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <PermissionsVaultModal
+        userId={permissionsUser?.id ?? null}
+        userName={permissionsUser?.name ?? ""}
+        onClose={() => setPermissionsUser(null)}
+      />
       </div>
     </>
   )
