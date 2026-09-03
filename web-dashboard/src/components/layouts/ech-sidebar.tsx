@@ -28,6 +28,7 @@ import {
   Link2,
   MessageCircleCheck,
   MessageCirclePlus,
+  FolderOpen,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ROUTES } from "@/constants"
@@ -47,6 +48,7 @@ const VA_NAV = [
     { href: ROUTES.DASHBOARD.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.DASHBOARD.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.DASHBOARD.REPORTING, icon: BarChart3, label: "My Report" },
+    { href: ROUTES.DASHBOARD.DOCUMENTS, icon: FolderOpen, label: "Documents" },
   ]},
   { section: "Reference", items: [
     { href: ROUTES.DASHBOARD.SOP, icon: ScrollText, label: "SOP Guide" },
@@ -64,6 +66,7 @@ const ADMIN_NAV = [
     { href: ROUTES.ADMIN.WORKLOAD, icon: CalendarDays, label: "Workload" },
     { href: ROUTES.ADMIN.LOG, icon: ClipboardList, label: "Activity Log" },
     { href: ROUTES.ADMIN.REPORTING, icon: BarChart3, label: "Reporting" },
+    { href: ROUTES.ADMIN.DOCUMENTS, icon: FolderOpen, label: "Documents" },
   ]},
   { section: "Management", items: [
     { href: ROUTES.ADMIN.USERS, icon: Users, label: "Users" },

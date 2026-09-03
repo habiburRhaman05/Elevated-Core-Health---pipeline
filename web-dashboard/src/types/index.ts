@@ -64,6 +64,33 @@ export interface VaPermissionsResponse {
 /** A user's own effective grants — every key present, admin/super_admin always all `true`. Used to hide/disable buttons a VA can't currently use. */
 export type EffectivePermissionMap = Record<VaPermissionKey, boolean>
 
+export type DocumentResourceType = "image" | "video" | "raw"
+
+export interface DocumentFolder {
+  id: string
+  name: string
+  parentFolderId?: string | null
+  createdBy?: Pick<User, "id" | "name"> | null
+  createdAt: string
+  updatedAt: string
+  _count: { children: number; documents: number }
+}
+
+export interface DocumentItem {
+  id: string
+  folderId?: string | null
+  patientId?: string | null
+  fileName: string
+  mimeType: string
+  sizeBytes: number
+  resourceType: DocumentResourceType
+  url: string
+  uploadedBy?: Pick<User, "id" | "name"> | null
+  patient?: Pick<Patient, "id" | "name"> | null
+  folder?: Pick<DocumentFolder, "id" | "name"> | null
+  createdAt: string
+}
+
 export type ChecklistStatus = "required" | "optional"
 
 export type EligibilityStatus = "not_checked" | "eligible" | "not_eligible"

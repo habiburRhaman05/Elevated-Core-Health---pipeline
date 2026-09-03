@@ -65,6 +65,13 @@ export const API_ENDPOINTS = {
     CONTACTS: "/crm/contacts",
     EXPORT: "/crm/contacts/export",
   },
+  DOCUMENTS: {
+    FOLDERS: "/documents/folders",
+    FOLDER: (id: string) => `/documents/folders/${id}`,
+    LIST: "/documents",
+    UPLOAD: "/documents/upload",
+    ITEM: (id: string) => `/documents/${id}`,
+  },
   REPORTING: {
     ADMIN: "/reporting/admin",
     ME: "/reporting/me",
@@ -139,6 +146,10 @@ export const QUERY_KEYS = {
     VAS: ["users", "vas"] as const,
   },
   MY_PERMISSIONS: ["users", "me", "permissions"] as const,
+  DOCUMENTS: {
+    FOLDERS: (parentId?: string) => ["documents", "folders", parentId ?? "root"] as const,
+    LIST: (params?: string) => ["documents", "list", params] as const,
+  },
   CRM: {
     CONTACTS: ["crm", "contacts"] as const,
   },
