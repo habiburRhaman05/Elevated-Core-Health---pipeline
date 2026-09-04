@@ -19,6 +19,7 @@ export const ROUTES = {
     PROFILE: "/dashboard/profile",
     MESSAGES: "/dashboard/messages",
     INTERNAL_MESSAGING: "/dashboard/internal-messaging",
+    DOCUMENTS: "/dashboard/documents",
   },
   ADMIN: {
     HOME: "/admin/dashboard",
@@ -37,6 +38,7 @@ export const ROUTES = {
     SETTINGS_WEBHOOKS: "/admin/dashboard/settings/webhooks",
     MESSAGES: "/admin/dashboard/messages",
     INTERNAL_MESSAGING: "/admin/dashboard/internal-messaging",
+    DOCUMENTS: "/admin/dashboard/documents",
   },
 }
 
@@ -63,6 +65,13 @@ export const API_ENDPOINTS = {
     CONTACTS: "/crm/contacts",
     EXPORT: "/crm/contacts/export",
   },
+  DOCUMENTS: {
+    FOLDERS: "/documents/folders",
+    FOLDER: (id: string) => `/documents/folders/${id}`,
+    LIST: "/documents",
+    UPLOAD: "/documents/upload",
+    ITEM: (id: string) => `/documents/${id}`,
+  },
   REPORTING: {
     ADMIN: "/reporting/admin",
     ME: "/reporting/me",
@@ -87,7 +96,9 @@ export const API_ENDPOINTS = {
     WEBHOOK_SETTINGS: "/admin/webhooks/settings",
     WEBHOOK_ROTATE_SECRET: "/admin/webhooks/rotate-secret",
     WEBHOOK_TEST: "/admin/webhooks/test",
+    PERMISSIONS: (userId: string) => `/admin/permissions/${userId}`,
   },
+  MY_PERMISSIONS: "/users/me/permissions",
   MESSAGING: {
     STATUS: "/messaging/status",
     NUMBERS: "/messaging/numbers",
@@ -133,6 +144,11 @@ export const QUERY_KEYS = {
   USERS: {
     ALL: ["users", "all"] as const,
     VAS: ["users", "vas"] as const,
+  },
+  MY_PERMISSIONS: ["users", "me", "permissions"] as const,
+  DOCUMENTS: {
+    FOLDERS: (parentId?: string) => ["documents", "folders", parentId ?? "root"] as const,
+    LIST: (params?: string) => ["documents", "list", params] as const,
   },
   CRM: {
     CONTACTS: ["crm", "contacts"] as const,
@@ -180,6 +196,7 @@ export const QUERY_KEYS = {
     ELIGIBILITY_RULES: ["admin", "eligibility-rules"] as const,
     CRM_INTEGRATION: ["admin", "crm-integration"] as const,
     WEBHOOK_SETTINGS: ["admin", "webhooks", "settings"] as const,
+    PERMISSIONS: (userId: string) => ["admin", "permissions", userId] as const,
   },
 }
 

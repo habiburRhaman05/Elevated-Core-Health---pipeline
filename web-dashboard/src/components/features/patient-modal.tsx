@@ -52,6 +52,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { DateTimePicker, DatePicker, getMinAppointmentDate, getMaxDobDate } from "@/components/ui/date-time-picker"
 import { useAuth } from "@/hooks/auth/useAuth"
+import { useMyPermissions } from "@/hooks/query/usePermissions"
 import { isAdminOrAbove, roleLabel } from "@/lib/roles"
 import {
   useMoveStage,
@@ -353,6 +354,15 @@ export function PatientModal({ patientId, open, onClose }: PatientModalProps) {
   const isAdmin = isAdminOrAbove(user?.role)
   const isAdminFlag = (flag?: PatientFlag | null) =>
     !!flag?.flaggedByUser && isAdminOrAbove(flag.flaggedByUser.role)
+  // Per-VA permission vault — admins always see every action (the ?? true
+  // fallback also covers the map still loading, so nothing flickers hidden
+  // for a split second on open).
+  const { data: myPermissions } = useMyPermissions()
+  const canRaiseFlag = myPermissions?.["patient.flag.raise"] ?? true
+  const canEditAppointment = myPermissions?.["patient.appointment.update"] ?? true
+  const canUpdateChecklist = myPermissions?.["patient.checklist.update"] ?? true
+  const canManageNotes = myPermissions?.["patient.notes.manage"] ?? true
+  const canEditInfo = myPermissions?.["patient.info.update"] ?? true
   const { order: stageOrder, labels: stageLabels, byKey: stageByKey } = useStageMeta()
   const { data: patient, isLoading } = usePatient(patientId || "")
   const { data: logData } = useActivityLog(
@@ -1055,14 +1065,16 @@ const isExpired = () => {
               <div className="flex flex-col items-end gap-2.5 shrink-0 min-w-0 max-w-full">
             
                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                  <button
-                    onClick={() => setShowFlagPopup(true)}
-                    className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 rounded-xl bg-white border border-white text-xs sm:text-sm font-semibold text-[#036638] hover:bg-emerald-50 transition-colors shadow-sm"
-                    title="Raise flag"
-                  >
-                    <Flag className="w-4 h-4 text-[#036638]" />
-                    Flag
-                  </button>
+                  {canRaiseFlag && (
+                    <button
+                      onClick={() => setShowFlagPopup(true)}
+                      className="flex items-center gap-1.5 px-3 py-2 sm:px-3.5 rounded-xl bg-white border border-white text-xs sm:text-sm font-semibold text-[#036638] hover:bg-emerald-50 transition-colors shadow-sm"
+                      title="Raise flag"
+                    >
+                      <Flag className="w-4 h-4 text-[#036638]" />
+                      Flag
+                    </button>
+                  )}
                   <div className="relative">
                     <button
                       onClick={() => setShowMenu((v) => !v)}
@@ -1206,13 +1218,15 @@ const isExpired = () => {
                       ) : (
                         <span className="text-gray-400 font-medium">Not scheduled</span>
                       )}
-                      <button
-                        onClick={() => setEditingAppointment(true)}
-                        className="ml-2 inline-flex align-middle p-1 rounded-md hover:bg-emerald-50 text-emerald-500 transition-colors"
-                        title="Edit appointment"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
+                      {canEditAppointment && (
+                        <button
+                          onClick={() => setEditingAppointment(true)}
+                          className="ml-2 inline-flex align-middle p-1 rounded-md hover:bg-emerald-50 text-emerald-500 transition-colors"
+                          title="Edit appointment"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      )}
                     </>
                   )}
                 </SidebarItem>
@@ -1627,7 +1641,7 @@ const isExpired = () => {
                                       <input
                                         type="checkbox"
                                         checked={checked}
-                                        disabled={isItemPending}
+                                        disabled={isItemPending || !canUpdateChecklist}
                                         onChange={() => {
                                           if (isItemPending) return
                                           setChecklistPending((prev) => new Set(prev).add(item.id))
@@ -1700,7 +1714,7 @@ const isExpired = () => {
                       <div className="bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm">
                         <div className="flex items-center justify-between mb-4 gap-2">
                           <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Contact & Payment</h4>
-                          <Button size="sm" onClick={onSaveContact} disabled={isSubmitting}
+                          <Button size="sm" onClick={onSaveContact} disabled={isSubmitting || !canEditInfo}
                             className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow shrink-0">
                             {isSubmitting ? "Saving..." : "Save"}
                           </Button>
@@ -1919,7 +1933,7 @@ const isExpired = () => {
                               <Button
                                 size="sm"
                                 onClick={handleAddNote}
-                                disabled={addNote.isPending || !newNoteText.trim()}
+                                disabled={addNote.isPending || !newNoteText.trim() || !canManageNotes}
                                 className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow"
                               >
                                 {addNote.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}
@@ -2322,14 +2336,16 @@ const isExpired = () => {
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => setShowFlagPopup(true)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white border border-white text-[11px] font-semibold text-[#036638] hover:bg-emerald-50 transition-colors shadow-sm"
-                    title="Raise flag"
-                  >
-                    <Flag className="w-3.5 h-3.5 text-[#036638]" />
-                    Flag
-                  </button>
+                  {canRaiseFlag && (
+                    <button
+                      onClick={() => setShowFlagPopup(true)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white border border-white text-[11px] font-semibold text-[#036638] hover:bg-emerald-50 transition-colors shadow-sm"
+                      title="Raise flag"
+                    >
+                      <Flag className="w-3.5 h-3.5 text-[#036638]" />
+                      Flag
+                    </button>
+                  )}
                   <div className="relative">
                     <button
                       onClick={() => setShowMenu((v) => !v)}
@@ -2519,7 +2535,9 @@ const isExpired = () => {
                       </p>
                       {patient.appointmentDatetime && <p className="text-[10px] font-medium text-emerald-600">{formatPatientTime(patient.bookingPlatform, new Date(patient.appointmentDatetime))}</p>}
                     </div>
-                    <button onClick={() => setEditingAppointment(true)} className="p-1 rounded hover:bg-emerald-50 text-emerald-500"><Pencil className="w-3 h-3" /></button>
+                    {canEditAppointment && (
+                      <button onClick={() => setEditingAppointment(true)} className="p-1 rounded hover:bg-emerald-50 text-emerald-500"><Pencil className="w-3 h-3" /></button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2666,7 +2684,7 @@ const isExpired = () => {
                                       <input
                                         type="checkbox"
                                         checked={checked}
-                                        disabled={isItemPending}
+                                        disabled={isItemPending || !canUpdateChecklist}
                                         onChange={() => {
                                           if (isItemPending) return
                                           setChecklistPending((prev) => new Set(prev).add(item.id))
@@ -2888,7 +2906,7 @@ const isExpired = () => {
                   <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
                     <div className="flex items-center justify-between mb-4 gap-2">
                       <h4 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Contact & Payment</h4>
-                      <Button size="sm" onClick={onSaveContact} disabled={isSubmitting} className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow shrink-0">
+                      <Button size="sm" onClick={onSaveContact} disabled={isSubmitting || !canEditInfo} className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow shrink-0">
                         {isSubmitting ? "Saving..." : "Save"}
                       </Button>
                     </div>
@@ -2991,7 +3009,7 @@ const isExpired = () => {
                           <Button
                             size="sm"
                             onClick={handleAddNote}
-                            disabled={addNote.isPending || !newNoteText.trim()}
+                            disabled={addNote.isPending || !newNoteText.trim() || !canManageNotes}
                             className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold shadow"
                           >
                             {addNote.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}
