@@ -70,12 +70,15 @@ export function DocumentCard(props: DocumentCardProps) {
   const isPreviewable = doc.resourceType === "image" || doc.resourceType === "video"
 
   return (
-    <div className="group relative bg-white rounded-xl border border-[#E5E7EB] overflow-hidden hover:shadow-sm transition-all">
+    // No overflow-hidden here — the 3-dot menu below is absolutely positioned
+    // and needs to pop out past the card's edge. Only the thumbnail (which
+    // needs its top corners clipped to match the card's rounding) gets it.
+    <div className="group relative bg-white rounded-xl border border-[#E5E7EB] hover:shadow-sm transition-all">
       {isPreviewable ? (
         <button
           type="button"
           onClick={onPreview}
-          className="relative block w-full h-28 bg-[#F4F5F7] overflow-hidden"
+          className="relative block w-full h-28 bg-[#F4F5F7] overflow-hidden rounded-t-xl"
           title={`Preview ${doc.fileName}`}
         >
           {doc.resourceType === "image" ? (
@@ -97,7 +100,7 @@ export function DocumentCard(props: DocumentCardProps) {
           href={doc.url}
           target="_blank"
           rel="noreferrer"
-          className="h-28 bg-[#F4F5F7] flex items-center justify-center"
+          className="h-28 bg-[#F4F5F7] flex items-center justify-center rounded-t-xl overflow-hidden"
           title={`Open ${doc.fileName}`}
         >
           {(() => {
