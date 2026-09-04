@@ -5,22 +5,26 @@ import { DocumentCard } from "./document-card"
 
 interface DocumentGridProps {
   documents: DocumentItem[]
+  canUpload: boolean
   canDelete: boolean
   openMenuId: string | null
   onToggleMenu: (id: string) => void
   onCloseMenu: () => void
   onCopyLink: (doc: DocumentItem) => void
+  onRename: (doc: DocumentItem) => void
   onDeleteRequest: (doc: DocumentItem) => void
   onPreview: (doc: DocumentItem) => void
 }
 
 export function DocumentGrid({
   documents,
+  canUpload,
   canDelete,
   openMenuId,
   onToggleMenu,
   onCloseMenu,
   onCopyLink,
+  onRename,
   onDeleteRequest,
   onPreview,
 }: DocumentGridProps) {
@@ -32,11 +36,13 @@ export function DocumentGrid({
         <DocumentCard
           key={doc.id}
           doc={doc}
+          canUpload={canUpload}
           canDelete={canDelete}
           menuOpen={openMenuId === doc.id}
           onToggleMenu={() => onToggleMenu(doc.id)}
           onCloseMenu={onCloseMenu}
           onCopyLink={() => onCopyLink(doc)}
+          onRename={() => onRename(doc)}
           onDeleteRequest={() => onDeleteRequest(doc)}
           onPreview={() => onPreview(doc)}
         />

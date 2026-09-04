@@ -1,28 +1,33 @@
 "use client"
 
-import { Link as LinkIcon, MoreVertical, PlayCircle, Trash2 } from "lucide-react"
+import { Download, Link as LinkIcon, MoreVertical, Pencil, PlayCircle, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { DocumentItem } from "@/types"
 import { formatDate, formatFileSize, iconForResourceType } from "./utils"
 
 interface DocumentCardProps {
   doc: DocumentItem
+  canUpload: boolean
   canDelete: boolean
   menuOpen: boolean
   onToggleMenu: () => void
   onCloseMenu: () => void
   onCopyLink: () => void
+  onRename: () => void
   onDeleteRequest: () => void
   onPreview: () => void
 }
 
-/** Shared dropdown menu — identical for both card layouts below. Just copy-link + delete;
- *  rename/open-in-new-tab were deliberately dropped (preview covers "view", the card click covers "open"). */
+/** Shared dropdown menu — identical for both card layouts below. */
 function DocumentMenu({
+  doc,
+  canUpload,
   canDelete,
   onCopyLink,
+  onRename,
   onDeleteRequest,
-}: Pick<DocumentCardProps, "canDelete" | "onCopyLink" | "onDeleteRequest">) {
+  onCloseMenu,
+}: Pick<DocumentCardProps, "doc" | "canUpload" | "canDelete" | "onCopyLink" | "onRename" | "onDeleteRequest" | "onCloseMenu">) {
   return (
     <div className="absolute right-0 top-8 z-20 w-40 bg-white border border-[#E5E7EB] rounded-xl shadow-lg overflow-hidden py-1">
       <button
@@ -31,6 +36,23 @@ function DocumentMenu({
       >
         <LinkIcon className="w-3.5 h-3.5" /> Copy link
       </button>
+      <a
+        href={doc.url}
+        target="_blank"
+        rel="noreferrer"
+        onClick={onCloseMenu}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#374151] hover:bg-[#F9FAFB]"
+      >
+        <Download className="w-3.5 h-3.5" /> Open / Download
+      </a>
+      {canUpload && (
+        <button
+          onClick={onRename}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#374151] hover:bg-[#F9FAFB]"
+        >
+          <Pencil className="w-3.5 h-3.5" /> Rename
+        </button>
+      )}
       {canDelete && (
         <button
           onClick={onDeleteRequest}
@@ -44,7 +66,7 @@ function DocumentMenu({
 }
 
 export function DocumentCard(props: DocumentCardProps) {
-  const { doc, canDelete, menuOpen, onToggleMenu, onCloseMenu, onCopyLink, onDeleteRequest, onPreview } = props
+  const { doc, menuOpen, onToggleMenu, onCloseMenu, onPreview } = props
   const isPreviewable = doc.resourceType === "image" || doc.resourceType === "video"
 
   return (
@@ -71,9 +93,6 @@ export function DocumentCard(props: DocumentCardProps) {
           )}
         </button>
       ) : (
-        // Not image/video, so there's no in-app preview to show — clicking
-        // opens it in a new tab instead. This is the only "open" path left
-        // now that the 3-dot menu's download/open link is gone.
         <a
           href={doc.url}
           target="_blank"
@@ -115,7 +134,7 @@ export function DocumentCard(props: DocumentCardProps) {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={onCloseMenu} />
-              <DocumentMenu canDelete={canDelete} onCopyLink={onCopyLink} onDeleteRequest={onDeleteRequest} />
+              <DocumentMenu {...props} />
             </>
           )}
         </div>
