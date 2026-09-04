@@ -10,10 +10,13 @@ interface DocumentDropzoneProps {
 }
 
 /**
- * Wraps the folder/file listing area so the whole panel — not just the
- * Upload button — accepts a drag-and-drop file drop. Counts drag enter/leave
- * events (rather than a plain boolean) because child elements re-fire these
- * as the pointer crosses their borders, which otherwise flickers the overlay.
+ * Wraps the whole documents page body so dropping a file anywhere on it — not
+ * just onto a specific widget — uploads it straight away. Deliberately has no
+ * onClick: clicking this area does nothing, since the Upload button is the
+ * only way to open the deliberate browse/drag dialog (see upload-modal.tsx).
+ * Counts drag enter/leave events (rather than a plain boolean) because child
+ * elements re-fire these as the pointer crosses their borders, which
+ * otherwise flickers the overlay.
  */
 export function DocumentDropzone({ disabled, onFilesDropped, children }: DocumentDropzoneProps) {
   const [dragDepth, setDragDepth] = useState(0)
@@ -58,7 +61,7 @@ export function DocumentDropzone({ disabled, onFilesDropped, children }: Documen
         <div className="absolute inset-0 z-30 flex items-center justify-center rounded-2xl border-2 border-dashed border-[#036638] bg-[#EBF7EC]/90 backdrop-blur-[1px] pointer-events-none">
           <div className="flex flex-col items-center gap-2 text-[#036638]">
             <UploadCloud className="w-10 h-10" />
-            <p className="text-sm font-bold">Drop files to upload</p>
+            <p className="text-sm font-bold">Drag &amp; drop to upload</p>
           </div>
         </div>
       )}

@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState } from "react"
-import { FolderOpen, FolderPlus, Loader2, X } from "lucide-react"
+import { useState } from "react"
+import { FolderOpen, FolderPlus, Loader2, MousePointerClick, X } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -11,7 +11,6 @@ import {
   useDeleteFolder,
   useDocuments,
   useUploadDocument,
-  useUpdateDocument,
   useDeleteDocument,
 } from "@/hooks/query/useDocuments"
 import { useMyPermissions } from "@/hooks/query/usePermissions"
@@ -22,6 +21,8 @@ import type { DocumentFolder, DocumentItem, DocumentResourceType } from "@/types
 import { DocumentsBreadcrumb } from "./documents/documents-breadcrumb"
 import { DocumentsToolbar } from "./documents/documents-toolbar"
 import { DocumentDropzone } from "./documents/document-dropzone"
+import { UploadModal } from "./documents/upload-modal"
+import { PreviewModal } from "./documents/preview-modal"
 import { UploadQueue } from "./documents/upload-queue"
 import { FolderGrid } from "./documents/folder-grid"
 import { DocumentGrid } from "./documents/document-grid"
@@ -47,14 +48,13 @@ export function DocumentsManager() {
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState("")
   const [renamingFolder, setRenamingFolder] = useState<DocumentFolder | null>(null)
-  const [renamingDoc, setRenamingDoc] = useState<DocumentItem | null>(null)
   const [deletingFolder, setDeletingFolder] = useState<DocumentFolder | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<DocumentItem | null>(null)
   const [folderNonEmptyError, setFolderNonEmptyError] = useState<string | null>(null)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([])
-
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadModalOpen, setUploadModalOpen] = useState(false)
+  const [previewDoc, setPreviewDoc] = useState<DocumentItem | null>(null)
 
   const { data: folders, isLoading: foldersLoading } = useFolders(currentFolderId)
   const { data: documents, isLoading: docsLoading } = useDocuments({
@@ -67,7 +67,6 @@ export function DocumentsManager() {
   const renameFolder = useRenameFolder()
   const deleteFolder = useDeleteFolder()
   const uploadDocument = useUploadDocument()
-  const updateDocument = useUpdateDocument()
   const deleteDocument = useDeleteDocument()
 
   const isLoading = foldersLoading || docsLoading
@@ -76,7 +75,7 @@ export function DocumentsManager() {
   const sortedFolders = folders ? sortFolders(folders, sortBy) : []
   const sortedDocuments = documents ? sortDocuments(documents, sortBy) : []
 
-  // ---- Upload (shared by the dropzone, drag-drop, and the browse button — all funnel through here) ----
+  // ---- Upload — shared by the full-page dropzone and the Upload-button modal ----
   const uploadFiles = (files: File[]) => {
     if (files.length === 0) return
     const queued: UploadQueueItem[] = files.map((f) => ({
@@ -100,14 +99,6 @@ export function DocumentsManager() {
           ),
       )
     })
-  }
-
-  const handleUploadClick = () => fileInputRef.current?.click()
-
-  const handleFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? [])
-    e.target.value = ""
-    uploadFiles(files)
   }
 
   const handleCreateFolder = async () => {
@@ -145,8 +136,6 @@ export function DocumentsManager() {
 
   return (
     <div className="space-y-4">
-      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFilesSelected} />
-
       <DocumentsBreadcrumb path={path} onNavigate={setPath} />
 
       <DocumentsToolbar
@@ -160,7 +149,7 @@ export function DocumentsManager() {
         canUpload={canUpload}
         isUploading={isUploading}
         onNewFolderClick={() => setShowNewFolder(true)}
-        onUploadClick={handleUploadClick}
+        onUploadClick={() => setUploadModalOpen(true)}
       />
 
       {showNewFolder && (
@@ -190,8 +179,19 @@ export function DocumentsManager() {
         </div>
       )}
 
+      {/* Whole-page drop target — dragging a file anywhere below this point
+          uploads it straight away. Clicking this area does nothing on
+          purpose; the Upload button above is the only way to open the
+          browse/drag dialog deliberately. */}
       <DocumentDropzone disabled={!canUpload} onFilesDropped={uploadFiles}>
-        <div className="space-y-4 min-h-[120px]">
+        <div className="space-y-4 min-h-[200px]">
+          {canUpload && (
+            <div className="flex items-center gap-1.5 text-xs text-[#9CA3AF]">
+              <MousePointerClick className="w-3.5 h-3.5" />
+              Drag &amp; drop files anywhere on this page to upload
+            </div>
+          )}
+
           {isLoading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-6 h-6 text-[#036638] animate-spin" />
@@ -208,20 +208,16 @@ export function DocumentsManager() {
 
               <DocumentGrid
                 documents={sortedDocuments}
-                canUpload={canUpload}
                 canDelete={canDelete}
                 openMenuId={openMenuId}
                 onToggleMenu={(id) => setOpenMenuId(openMenuId === id ? null : id)}
                 onCloseMenu={() => setOpenMenuId(null)}
                 onCopyLink={handleCopyLink}
-                onRename={(doc) => {
-                  setRenamingDoc(doc)
-                  setOpenMenuId(null)
-                }}
                 onDeleteRequest={(doc) => {
                   setDeletingDoc(doc)
                   setOpenMenuId(null)
                 }}
+                onPreview={setPreviewDoc}
               />
 
               {sortedFolders.length === 0 && sortedDocuments.length === 0 && (
@@ -237,6 +233,10 @@ export function DocumentsManager() {
         </div>
       </DocumentDropzone>
 
+      <UploadModal open={uploadModalOpen} onClose={() => setUploadModalOpen(false)} onUpload={uploadFiles} />
+
+      <PreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
+
       <UploadQueue items={uploadQueue} onDismiss={() => setUploadQueue([])} />
 
       <RenameModal
@@ -250,20 +250,6 @@ export function DocumentsManager() {
           if (!renamingFolder) return
           await renameFolder.mutateAsync({ id: renamingFolder.id, name })
           setRenamingFolder(null)
-        }}
-      />
-
-      <RenameModal
-        key={renamingDoc?.id ?? "no-doc"}
-        open={!!renamingDoc}
-        title="Rename Document"
-        initialValue={renamingDoc?.fileName ?? ""}
-        isSaving={updateDocument.isPending}
-        onCancel={() => setRenamingDoc(null)}
-        onSave={async (fileName) => {
-          if (!renamingDoc) return
-          await updateDocument.mutateAsync({ id: renamingDoc.id, changes: { fileName } })
-          setRenamingDoc(null)
         }}
       />
 

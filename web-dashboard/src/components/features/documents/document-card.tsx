@@ -1,32 +1,28 @@
 "use client"
 
-import { Download, Link as LinkIcon, MoreVertical, Pencil, PlayCircle, Trash2 } from "lucide-react"
+import { Link as LinkIcon, MoreVertical, PlayCircle, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { DocumentItem } from "@/types"
 import { formatDate, formatFileSize, iconForResourceType } from "./utils"
 
 interface DocumentCardProps {
   doc: DocumentItem
-  canUpload: boolean
   canDelete: boolean
   menuOpen: boolean
   onToggleMenu: () => void
   onCloseMenu: () => void
   onCopyLink: () => void
-  onRename: () => void
   onDeleteRequest: () => void
+  onPreview: () => void
 }
 
-/** Shared dropdown menu — identical for both card layouts below. */
+/** Shared dropdown menu — identical for both card layouts below. Just copy-link + delete;
+ *  rename/open-in-new-tab were deliberately dropped (preview covers "view", the card click covers "open"). */
 function DocumentMenu({
-  doc,
-  canUpload,
   canDelete,
   onCopyLink,
-  onRename,
   onDeleteRequest,
-  onCloseMenu,
-}: Pick<DocumentCardProps, "doc" | "canUpload" | "canDelete" | "onCopyLink" | "onRename" | "onDeleteRequest" | "onCloseMenu">) {
+}: Pick<DocumentCardProps, "canDelete" | "onCopyLink" | "onDeleteRequest">) {
   return (
     <div className="absolute right-0 top-8 z-20 w-40 bg-white border border-[#E5E7EB] rounded-xl shadow-lg overflow-hidden py-1">
       <button
@@ -35,23 +31,6 @@ function DocumentMenu({
       >
         <LinkIcon className="w-3.5 h-3.5" /> Copy link
       </button>
-      <a
-        href={doc.url}
-        target="_blank"
-        rel="noreferrer"
-        onClick={onCloseMenu}
-        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#374151] hover:bg-[#F9FAFB]"
-      >
-        <Download className="w-3.5 h-3.5" /> Open / Download
-      </a>
-      {canUpload && (
-        <button
-          onClick={onRename}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#374151] hover:bg-[#F9FAFB]"
-        >
-          <Pencil className="w-3.5 h-3.5" /> Rename
-        </button>
-      )}
       {canDelete && (
         <button
           onClick={onDeleteRequest}
@@ -65,18 +44,17 @@ function DocumentMenu({
 }
 
 export function DocumentCard(props: DocumentCardProps) {
-  const { doc, menuOpen, onToggleMenu, onCloseMenu } = props
+  const { doc, canDelete, menuOpen, onToggleMenu, onCloseMenu, onCopyLink, onDeleteRequest, onPreview } = props
   const isPreviewable = doc.resourceType === "image" || doc.resourceType === "video"
 
   return (
     <div className="group relative bg-white rounded-xl border border-[#E5E7EB] overflow-hidden hover:shadow-sm transition-all">
       {isPreviewable ? (
-        <a
-          href={doc.url}
-          target="_blank"
-          rel="noreferrer"
-          className="relative block h-28 bg-[#F4F5F7] overflow-hidden"
-          title={`Open ${doc.fileName}`}
+        <button
+          type="button"
+          onClick={onPreview}
+          className="relative block w-full h-28 bg-[#F4F5F7] overflow-hidden"
+          title={`Preview ${doc.fileName}`}
         >
           {doc.resourceType === "image" ? (
             // eslint-disable-next-line @next/next/no-img-element -- remote Cloudinary URL, no static optimization needed
@@ -87,16 +65,22 @@ export function DocumentCard(props: DocumentCardProps) {
               className="w-full h-full object-cover transition-transform group-hover:scale-[1.03]"
             />
           ) : (
-            <>
-              {/* Cloudinary video URLs render a poster frame fine as an <img> too — swap .mp4/.webm etc. isn't needed since browsers show the first frame for a plain <video> poster-less element instead. Keep it simple: a play-badge over a dark tile. */}
-              <div className="w-full h-full flex items-center justify-center bg-[#1A1B1E]">
-                <PlayCircle className="w-9 h-9 text-white/80" />
-              </div>
-            </>
+            <div className="w-full h-full flex items-center justify-center bg-[#1A1B1E]">
+              <PlayCircle className="w-9 h-9 text-white/80" />
+            </div>
           )}
-        </a>
+        </button>
       ) : (
-        <div className="h-28 bg-[#F4F5F7] flex items-center justify-center">
+        // Not image/video, so there's no in-app preview to show — clicking
+        // opens it in a new tab instead. This is the only "open" path left
+        // now that the 3-dot menu's download/open link is gone.
+        <a
+          href={doc.url}
+          target="_blank"
+          rel="noreferrer"
+          className="h-28 bg-[#F4F5F7] flex items-center justify-center"
+          title={`Open ${doc.fileName}`}
+        >
           {(() => {
             const { Icon, color, bg } = iconForResourceType(doc.resourceType, doc.mimeType)
             return (
@@ -105,7 +89,7 @@ export function DocumentCard(props: DocumentCardProps) {
               </div>
             )
           })()}
-        </div>
+        </a>
       )}
 
       <div className="p-3 pr-9 relative">
@@ -131,7 +115,7 @@ export function DocumentCard(props: DocumentCardProps) {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={onCloseMenu} />
-              <DocumentMenu {...props} />
+              <DocumentMenu canDelete={canDelete} onCopyLink={onCopyLink} onDeleteRequest={onDeleteRequest} />
             </>
           )}
         </div>
