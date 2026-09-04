@@ -41,8 +41,12 @@ export function PasswordGroupSection({
   const hasGroupActions = !!(onRenameGroup || onShareGroup || onDeleteGroup)
 
   return (
-    <div className="rounded-xl border border-[#E5E7EB] bg-white overflow-hidden">
-      <div className="flex items-center gap-2 px-4 py-2.5 bg-[#F9FAFB] border-b border-[#E5E7EB]">
+    // No overflow-hidden on the root — the entry rows' 3-dot dropdown menus
+    // are absolutely positioned and need to pop out past this card's edge.
+    // Only the header (which needs its top corners clipped to match the
+    // card's rounding) gets it.
+    <div className="rounded-xl border border-[#E5E7EB] bg-white">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-[#F9FAFB] border-b border-[#E5E7EB] rounded-t-xl overflow-hidden">
         <button onClick={() => setCollapsed((v) => !v)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
           <ChevronDown className={cn("w-3.5 h-3.5 text-[#6B7280] transition-transform shrink-0", collapsed && "-rotate-90")} />
           <Folder className="w-4 h-4 text-[#036638] shrink-0" />
