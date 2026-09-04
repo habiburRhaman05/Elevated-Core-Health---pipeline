@@ -142,6 +142,12 @@ model User {
   documentFoldersCreated DocumentFolder[] @relation("DocumentFolderCreatedBy")
   documentsUploaded      Document[]       @relation("DocumentUploadedBy")
 
+  passwordGroupsCreated  PasswordGroup[]       @relation("PasswordGroupCreatedBy")
+  passwordEntriesCreated PasswordEntry[]       @relation("PasswordEntryCreatedBy")
+  passwordEntriesUpdated PasswordEntry[]       @relation("PasswordEntryUpdatedBy")
+  passwordGroupAccess    PasswordGroupAccess[]
+  passwordEntryAccess    PasswordEntryAccess[]
+
   // Link Internal Board (VA/Admin staff chat) — fully separate from the
   // patient-SMS models above; no FK crosses between the two feature areas.
   internalConversationsCreated InternalConversation[]            @relation("InternalConversationCreatedBy")
@@ -846,4 +852,83 @@ model InternalAttachment {
 
   @@index([messageId])
   @@map("internal_attachments")
+}
+
+/**
+ * Password Vault — admin-managed shared credentials (e.g. "Optimantra Admin
+ * Login"), never plaintext at rest. The actual secret lives only in
+ * secretCipher/secretIv/secretAuthTag (AES-256-GCM, key from
+ * env.PASSWORD_VAULT_ENCRYPTION_KEY — see @/lib/encryption.ts) and is
+ * decrypted only inside an already-authorized read.
+ * Deleting a group ungroups its entries (SetNull) rather than deleting them —
+ * same "don't destroy data as a side effect of tidying structure" rule as
+ * DocumentFolder deletion.
+ */
+model PasswordGroup {
+  id          String   @id @default(uuid())
+  name        String
+  createdById String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  createdBy User?                 @relation("PasswordGroupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  entries   PasswordEntry[]
+  access    PasswordGroupAccess[]
+
+  @@map("password_groups")
+}
+
+model PasswordEntry {
+  id            String   @id @default(uuid())
+  name          String
+  username      String?
+  // AES-256-GCM ciphertext + the per-encryption IV and auth tag needed to
+  // decrypt/verify it — never the plaintext password, in memory only for the
+  // duration of an authorized request.
+  secretCipher  String   @map("secret_cipher")
+  secretIv      String   @map("secret_iv")
+  secretAuthTag String   @map("secret_auth_tag")
+  notes         String?
+  groupId       String?  @map("group_id")
+  createdById   String?  @map("created_by")
+  updatedById   String?  @map("updated_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  group     PasswordGroup?        @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  createdBy User?                 @relation("PasswordEntryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy User?                 @relation("PasswordEntryUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  access    PasswordEntryAccess[]
+
+  @@index([groupId])
+  @@map("password_entries")
+}
+
+/**
+ * Sharing a whole group with a VA grants every entry inside it — present and future.
+ */
+model PasswordGroupAccess {
+  groupId String @map("group_id")
+  userId  String @map("user_id")
+
+  group PasswordGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+  @@map("password_group_access")
+}
+
+/**
+ * Per-entry override/addition — works for ungrouped entries, or to share one
+ * entry from an otherwise-unshared group without exposing the rest of it.
+ */
+model PasswordEntryAccess {
+  entryId String @map("entry_id")
+  userId  String @map("user_id")
+
+  entry PasswordEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, userId])
+  @@map("password_entry_access")
 }

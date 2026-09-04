@@ -1,6 +1,6 @@
 "use client"
 
-import { Lock, Webhook } from "lucide-react"
+import { KeyRound, Lock, Webhook } from "lucide-react"
 import Link from "next/link"
 import { ROUTES } from "@/constants"
 import { useAuth } from "@/hooks/auth/useAuth"
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { isAdminOrAbove } from "@/lib/roles"
 
 interface SettingsNavProps {
-  currentPage: "profile" | "users" | "stages" | "webhooks"
+  currentPage: "profile" | "users" | "stages" | "webhooks" | "password-vault"
   className?: string
 }
 
@@ -28,6 +28,13 @@ export function SettingsNav({ currentPage, className }: SettingsNavProps) {
       icon: Lock,
       desc: "Account & security",
       href: profileHref,
+    },
+    {
+      id: "password-vault" as const,
+      label: "Password Vault",
+      icon: KeyRound,
+      desc: "Shared credentials",
+      href: isAdmin ? ROUTES.ADMIN.SETTINGS_PASSWORD_VAULT : ROUTES.DASHBOARD.SETTINGS_PASSWORD_VAULT,
     },
     ...(isAdmin
       ? [

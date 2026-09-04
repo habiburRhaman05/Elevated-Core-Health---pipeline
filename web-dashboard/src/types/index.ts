@@ -91,6 +91,27 @@ export interface DocumentItem {
   createdAt: string
 }
 
+export interface PasswordGroup {
+  id: string
+  name: string
+  access: Array<Pick<User, "id" | "name">>
+  entryCount: number
+  createdAt: string
+}
+
+export interface PasswordEntry {
+  id: string
+  name: string
+  username?: string | null
+  notes?: string | null
+  group?: Pick<PasswordGroup, "id" | "name"> | null
+  // Present on the admin view (who can see this entry), omitted on the VA's
+  // own list — a VA has no reason to see the rest of the share list.
+  access?: Array<Pick<User, "id" | "name">>
+  createdAt: string
+  updatedAt: string
+}
+
 export type ChecklistStatus = "required" | "optional"
 
 export type EligibilityStatus = "not_checked" | "eligible" | "not_eligible"

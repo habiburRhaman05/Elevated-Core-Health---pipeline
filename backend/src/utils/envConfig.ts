@@ -27,6 +27,17 @@ const envSchema = z.object({
 
 	WEBHOOK_SECRET: z.string().min(16, "WEBHOOK_SECRET must be at least 16 characters"),
 
+	// Password Vault at-rest encryption key — exactly 32 bytes, hex-encoded (64
+	// hex chars). Generate with: openssl rand -hex 32. Rotating this makes every
+	// previously-encrypted password unreadable, so treat it like a database
+	// credential: back it up, never commit it, same value across restarts.
+	PASSWORD_VAULT_ENCRYPTION_KEY: z
+		.string()
+		.regex(
+			/^[0-9a-fA-F]{64}$/,
+			"PASSWORD_VAULT_ENCRYPTION_KEY must be a 64-character hex string (32 bytes) — generate with: openssl rand -hex 32",
+		),
+
 	// Klarity pushes appointments to POST /api/patients/intake/klarity and
 	// authenticates with a static bearer token. The default below is the value
 	// Klarity is configured with today; override per-environment to rotate it.

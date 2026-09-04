@@ -20,6 +20,7 @@ export const ROUTES = {
     MESSAGES: "/dashboard/messages",
     INTERNAL_MESSAGING: "/dashboard/internal-messaging",
     DOCUMENTS: "/dashboard/documents",
+    SETTINGS_PASSWORD_VAULT: "/dashboard/settings/password-vault",
   },
   ADMIN: {
     HOME: "/admin/dashboard",
@@ -39,6 +40,7 @@ export const ROUTES = {
     MESSAGES: "/admin/dashboard/messages",
     INTERNAL_MESSAGING: "/admin/dashboard/internal-messaging",
     DOCUMENTS: "/admin/dashboard/documents",
+    SETTINGS_PASSWORD_VAULT: "/admin/dashboard/settings/password-vault",
   },
 }
 
@@ -71,6 +73,17 @@ export const API_ENDPOINTS = {
     LIST: "/documents",
     UPLOAD: "/documents/upload",
     ITEM: (id: string) => `/documents/${id}`,
+  },
+  PASSWORD_VAULT: {
+    GROUPS: "/password-vault/groups",
+    GROUP: (id: string) => `/password-vault/groups/${id}`,
+    GROUP_ACCESS: (id: string) => `/password-vault/groups/${id}/access`,
+    ENTRIES: "/password-vault/entries",
+    ENTRY: (id: string) => `/password-vault/entries/${id}`,
+    ENTRY_ACCESS: (id: string) => `/password-vault/entries/${id}/access`,
+    ENTRY_REVEAL: (id: string) => `/password-vault/entries/${id}/reveal`,
+    MY_ENTRIES: "/password-vault/my-entries",
+    MY_ENTRY_REVEAL: (id: string) => `/password-vault/my-entries/${id}/reveal`,
   },
   REPORTING: {
     ADMIN: "/reporting/admin",
@@ -149,6 +162,11 @@ export const QUERY_KEYS = {
   DOCUMENTS: {
     FOLDERS: (parentId?: string) => ["documents", "folders", parentId ?? "root"] as const,
     LIST: (params?: string) => ["documents", "list", params] as const,
+  },
+  PASSWORD_VAULT: {
+    GROUPS: ["password-vault", "groups"] as const,
+    ENTRIES: ["password-vault", "entries"] as const,
+    MY_ENTRIES: ["password-vault", "my-entries"] as const,
   },
   CRM: {
     CONTACTS: ["crm", "contacts"] as const,

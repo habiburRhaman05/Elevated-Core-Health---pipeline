@@ -65,6 +65,12 @@ const REDACTED_KEYS = new Set([
 	"secret",
 	"apikey",
 	"api_key",
+	"secretcipher",
+	"secret_cipher",
+	"secretiv",
+	"secret_iv",
+	"secretauthtag",
+	"secret_auth_tag",
 ]);
 
 /** Shallow + one-level-nested redaction — enough for the small objects audit() ever receives. */
