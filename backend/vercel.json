@@ -1,6 +1,5 @@
 {
 	"installCommand": "npm install --include=dev",
 	"buildCommand": "npx prisma generate && npx tsup",
-	"rewrites": [{ "source": "/(.*)", "destination": "/api" }],
-	"crons": [{ "path": "/api/patients/intake/grow-therapy", "schedule": "*/1 * * * *" }]
+	"rewrites": [{ "source": "/(.*)", "destination": "/api" }]
 }

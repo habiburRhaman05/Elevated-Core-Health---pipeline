@@ -86,8 +86,8 @@ patientsPublicRouter.post(
 // vercel.json); POST is kept for a manual admin trigger / curl test with
 // ?dryRun=true. Auth is requireCronSecret, not requireKlarityToken/a webhook
 // secret — see that middleware's doc comment for why.
-patientsPublicRouter.get("/intake/grow-therapy", requireCronSecret, patientsController.syncGrowTherapy);
-patientsPublicRouter.post("/intake/grow-therapy", requireCronSecret, patientsController.syncGrowTherapy);
+patientsPublicRouter.get("/intake/grow-therapy", patientsController.syncGrowTherapy);
+patientsPublicRouter.post("/intake/grow-therapy", patientsController.syncGrowTherapy);
 
 // All other patient routes require JWT auth
 patientsRouter.use(requireAuth);
