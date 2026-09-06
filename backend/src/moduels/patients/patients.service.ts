@@ -1,9 +1,11 @@
+import { Prisma } from "@/generated/prisma/client";
 import { StatusCodes } from "http-status-codes";
 
 import { isChecklistComplete } from "@/config/checklists";
 import { isAdminOrAbove } from "@/config/roles";
 import { getFirstStageKey, getStageOrder } from "@/config/stages";
 import { audit } from "@/lib/audit";
+import { fetchGrowTherapyEvents, type GrowTherapyEvent } from "@/lib/growTherapyCalendar";
 import { isPatientInScope, patientScopeFor } from "@/lib/scope";
 import type { AuthenticatedUser } from "@/lib/types";
 import { emailService } from "@/services/email.service";
@@ -199,7 +201,10 @@ function fuzzyNameMatch(candidate: string, targetName: string | null | undefined
  * appointment-time rule (< 12 PM = Jude, ≥ 12 PM = Amanda). If no rule
  * matches, the patient stays unassigned.
  */
-async function resolveAutoAssign(
+// Exported so the Grow Therapy calendar sync (below) can reuse the exact
+// same assignment rule instead of re-deriving it — a calendar-sourced
+// appointment auto-assigns exactly like any other new-patient intake.
+export async function resolveAutoAssign(
 	input: { assignedTo?: string | null; vaName?: string | null; practitionerName?: string | null },
 	appointmentDatetime: Date | null,
 ): Promise<{ assignedTo: string | null; assignmentMethod: string }> {
@@ -912,6 +917,323 @@ const klarityHandlers = {
 		return ServiceResponse.success(`Visit status set to ${visitStatus} from Klarity webhook.`, toPatientDto(updated));
 	},
 };
+
+// ---------------------------------------------------------------------------
+// Grow Therapy calendar sync (poll-based, not a webhook push)
+// ---------------------------------------------------------------------------
+//
+// Unlike Klarity, Grow Therapy never pushes us anything — a cron job (dev:
+// node-cron in src/index.ts, prod: Vercel Cron hitting this same route) polls
+// a Google Calendar .ics export and hands each occurrence here. Two
+// consequences of that, versus the Klarity design above:
+//
+//   1. There is no vendor clientId/email/phone to match a RETURNING patient
+//      across separate bookings — only initials/a possibly-present full name
+//      parsed from free text. Per explicit product decision, this sync does
+//      NOT attempt that fuzzy person-matching: the only identity it trusts is
+//      the calendar occurrence itself (`eventKey`, see growTherapyCalendar.ts
+//      for why that's `googleUid::startTime` and not the bare UID). A brand
+//      new occurrence always means a brand new Patient card at the first
+//      stage — never an attempt to attach it to some other existing card.
+//   2. There is no explicit "this appointment was rescheduled" event to react
+//      to — only a snapshot on every poll. Change detection is a straight
+//      comparison of AppointmentHistory.vendorLastModifiedAt (what we stored
+//      last time) against the feed's current LAST-MODIFIED/DTSTAMP.
+//
+// The `AppointmentHistory.externalAppointmentId` lookup below is NOT scoped
+// to stage or status — it searches every patient regardless of where their
+// card currently sits on the board, so a Grow Therapy edit reaches a patient
+// who has already moved past onboarding instead of only ever matching
+// freshly-created ones.
+
+export interface GrowTherapySyncEntry {
+	eventKey: string;
+	googleUid: string;
+	status: "CREATED" | "UPDATED" | "UNCHANGED" | "FAILED";
+	patientId?: string;
+	prev?: Record<string, unknown>;
+	new?: Record<string, unknown>;
+	error?: string;
+}
+
+export interface GrowTherapySyncSummary {
+	scanned: number;
+	created: number;
+	updated: number;
+	unchanged: number;
+	failed: number;
+	entries: GrowTherapySyncEntry[];
+}
+
+/** True when `err` is Postgres' unique-violation for the given constraint — same pattern internal-messaging.service.ts uses for its own concurrent-create race (dmPairKey). */
+function isUniqueViolationOn(err: unknown, target: string): boolean {
+	return (
+		err instanceof Prisma.PrismaClientKnownRequestError &&
+		err.code === "P2002" &&
+		(Array.isArray(err.meta?.target) ? err.meta.target.includes(target) : err.meta?.target === target)
+	);
+}
+
+/** Builds the small, non-clinical vendor metadata bag stored in Patient.paymentDetails — same convention mapKlarityFields uses. Never the raw calendar description (see growTherapyCalendar.ts's extractFullPatientName doc comment on why). */
+function buildGrowTherapyMetadata(evt: GrowTherapyEvent) {
+	return {
+		vendor: "grow_therapy",
+		googleUid: evt.googleUid,
+		patientInitials: evt.patientInitials,
+		telehealthLink: evt.telehealthLink,
+		rawTitle: evt.rawTitle,
+	};
+}
+
+/**
+ * Processes exactly one calendar occurrence: create, update (with an
+ * explicit prev/new console log per the agreed spec), or skip-as-unchanged.
+ * Never throws — a single bad occurrence is caught by the caller's loop and
+ * reported as a FAILED entry so it can't take down the rest of the batch.
+ */
+async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): Promise<GrowTherapySyncEntry> {
+	const existing = await prisma.appointmentHistory.findUnique({
+		where: { externalAppointmentId: evt.eventKey },
+		include: { patient: true },
+	});
+
+	// -------------------------------------------------------------------
+	// Case A: never seen this occurrence before → brand-new patient card,
+	// always at the first stage, regardless of what any other patient's
+	// current stage is (there is no "attach to existing person" case here).
+	// -------------------------------------------------------------------
+	if (!existing) {
+		if (dryRun) {
+			return { eventKey: evt.eventKey, googleUid: evt.googleUid, status: "CREATED" };
+		}
+
+		console.log("hander name",evt.providerName);
+		
+		const firstStage = await getFirstStageKey();
+		const { assignedTo, assignmentMethod } = await resolveAutoAssign(
+			{ practitionerName: evt.providerName },
+			evt.startTime,
+		);
+
+		const displayName = evt.fullPatientName || evt.patientInitials || "Grow Therapy Patient";
+		console.log("name of pateints",displayName,"handler :",assignedTo);
+		
+		const { firstName, lastName } = splitName(displayName);
+		const vendorMetadata = buildGrowTherapyMetadata(evt);
+
+	
+		let patient: { id: string };
+		try {
+			const created = await prisma.$transaction(async (tx) => {
+				const patient = await tx.patient.create({
+					data: {
+						firstName: firstName || displayName,
+						lastName,
+						stage: firstStage,
+						appointmentDatetime: evt.startTime,
+						appointmentEndDatetime: evt.endTime,
+						externalAppointmentId: evt.eventKey,
+						bookingPlatform: "grow_therapy",
+						source: "grow_therapy",
+						paymentDetails: JSON.parse(JSON.stringify(vendorMetadata)),
+						checklistState: {},
+						notes: evt.providerName ? `Practitioner: ${evt.providerName}` : null,
+						assignedTo,
+					},
+				});
+
+				await tx.appointmentHistory.create({
+					data: {
+						patientId: patient.id,
+						externalAppointmentId: evt.eventKey,
+						appointmentDatetime: evt.startTime,
+						appointmentEndDatetime: evt.endTime,
+						status: "scheduled",
+						source: "grow_therapy",
+						lastEventType: "calendar.synced",
+						vendorLastModifiedAt: evt.lastModifiedTime,
+						providerName: evt.providerName,
+					},
+				});
+
+				return patient;
+			});
+			patient = created;
+		} catch (err) {
+			if (isUniqueViolationOn(err, "appointment_history_external_appointment_id_key")) {
+				// Lost the create race to a concurrent run that got there first —
+				// this occurrence is already handled, nothing left to do.
+				logger.warn(
+					{ eventKey: evt.eventKey },
+					"Grow Therapy sync — lost a create race to a concurrent run, skipping (already handled elsewhere)",
+				);
+				return { eventKey: evt.eventKey, googleUid: evt.googleUid, status: "UNCHANGED" };
+			}
+			throw err;
+		}
+
+		logger.info(
+			{ patientId: patient.id, eventKey: evt.eventKey, assignedTo, assignmentMethod },
+			"Grow Therapy sync — new appointment, patient created at onboarding",
+		);
+		await audit({
+			patientId: patient.id,
+			user: null,
+			action: "patient.create",
+			category: "appointment",
+			entityType: "patient",
+			entityId: patient.id,
+			newValue: { source: "grow_therapy", eventKey: evt.eventKey, appointmentDatetime: evt.startTime, assignmentMethod },
+			message: `New patient auto-created from Grow Therapy calendar sync${assignedTo ? ` — Auto-assigned via ${assignmentMethod}` : ""}`,
+			type: "auto",
+		});
+
+		return { eventKey: evt.eventKey, googleUid: evt.googleUid, status: "CREATED", patientId: patient.id };
+	}
+
+	// -------------------------------------------------------------------
+	// Case B: already known — compare the vendor's own last-modified instant.
+	// Equal → nothing changed on the calendar side, skip entirely (no writes).
+	// Different → provider edited/rescheduled this slot; update in place and
+	// log the exact { eventUid, status: "UPDATED", prev, new } snapshot.
+	// -------------------------------------------------------------------
+	const prevModified = existing.vendorLastModifiedAt?.getTime();
+	const nextModified = evt.lastModifiedTime.getTime();
+
+	if (prevModified === nextModified) {
+		return { eventKey: evt.eventKey, googleUid: evt.googleUid, status: "UNCHANGED", patientId: existing.patientId };
+	}
+
+	const prevSnapshot = {
+		appointmentDatetime: existing.appointmentDatetime,
+		appointmentEndDatetime: existing.appointmentEndDatetime,
+		providerName: existing.providerName,
+		vendorLastModifiedAt: existing.vendorLastModifiedAt,
+	};
+	const newSnapshot = {
+		appointmentDatetime: evt.startTime,
+		appointmentEndDatetime: evt.endTime,
+		providerName: evt.providerName,
+		vendorLastModifiedAt: evt.lastModifiedTime,
+	};
+
+	// biome-ignore lint/suspicious/noConsole: explicit product requirement — a
+	// human-readable comparison report on every detected change, independent
+	// of the structured pino logger below.
+	console.log(
+		JSON.stringify(
+			{ eventUid: evt.eventKey, status: "UPDATED", prev: prevSnapshot, new: newSnapshot },
+			null,
+			2,
+		),
+	);
+
+	if (dryRun) {
+		return {
+			eventKey: evt.eventKey,
+			googleUid: evt.googleUid,
+			status: "UPDATED",
+			patientId: existing.patientId,
+			prev: prevSnapshot,
+			new: newSnapshot,
+		};
+	}
+
+	await prisma.$transaction([
+		prisma.appointmentHistory.update({
+			where: { id: existing.id },
+			data: {
+				previousDatetime: existing.appointmentDatetime,
+				appointmentDatetime: evt.startTime,
+				appointmentEndDatetime: evt.endTime,
+				status: "rescheduled",
+				lastEventType: "calendar.synced",
+				vendorLastModifiedAt: evt.lastModifiedTime,
+				providerName: evt.providerName ?? existing.providerName,
+			},
+		}),
+		// Bumps Patient.updatedAt via @updatedAt — the client's explicit
+		// requirement that the patient card's "last update time" reflects a
+		// calendar-detected change, without touching its pipeline stage.
+		prisma.patient.update({
+			where: { id: existing.patientId },
+			data: {
+				appointmentDatetime: evt.startTime,
+				appointmentEndDatetime: evt.endTime,
+			},
+		}),
+	]);
+
+	logger.info({ eventKey: evt.eventKey, patientId: existing.patientId }, "Grow Therapy sync — appointment updated");
+	await audit({
+		patientId: existing.patientId,
+		user: null,
+		action: "patient.appointment.update",
+		category: "appointment",
+		entityType: "patient",
+		entityId: existing.patientId,
+		prevValue: prevSnapshot,
+		newValue: newSnapshot,
+		message: "Grow Therapy calendar sync detected an edited/rescheduled appointment",
+		type: "auto",
+	});
+
+	return {
+		eventKey: evt.eventKey,
+		googleUid: evt.googleUid,
+		status: "UPDATED",
+		patientId: existing.patientId,
+		prev: prevSnapshot,
+		new: newSnapshot,
+	};
+}
+
+/**
+ * Runs one full poll of the Grow Therapy calendar feed. `dryRun: true` fetches
+ * and logs exactly what WOULD happen without writing anything — the same
+ * "preview, never DB writes" mode the reference script started from,  useful
+ * for validating a freshly-swapped-in calendar URL before trusting it.
+ */
+async function runGrowTherapySync(icsUrl: string, dryRun = false): Promise<GrowTherapySyncSummary> {
+	const events = await fetchGrowTherapyEvents(icsUrl);
+	const entries: GrowTherapySyncEntry[] = [];
+
+	for (const evt of events) {
+		try {
+			entries.push(await syncOneGrowTherapyEvent(evt, dryRun));
+		} catch (err) {
+			logger.error({ err, eventKey: evt.eventKey }, "Grow Therapy sync — failed to process one calendar occurrence");
+			entries.push({
+				eventKey: evt.eventKey,
+				googleUid: evt.googleUid,
+				status: "FAILED",
+				error: err instanceof Error ? err.message : "Unknown error",
+			});
+		}
+	}
+
+	const summary: GrowTherapySyncSummary = {
+		scanned: entries.length,
+		created: entries.filter((e) => e.status === "CREATED").length,
+		updated: entries.filter((e) => e.status === "UPDATED").length,
+		unchanged: entries.filter((e) => e.status === "UNCHANGED").length,
+		failed: entries.filter((e) => e.status === "FAILED").length,
+		entries,
+	};
+
+	logger.info(
+		{ scanned: summary.scanned, created: summary.created, updated: summary.updated, unchanged: summary.unchanged, failed: summary.failed, dryRun },
+		"Grow Therapy calendar sync run complete",
+	);
+
+	return summary;
+}
+
+// Guards against two overlapping runs (e.g. a slow fetch still in flight when
+// the next cron tick fires) — only relevant to the dev node-cron loop, which
+// calls syncGrowTherapy() directly rather than through a single-invocation
+// HTTP request the way Vercel Cron does.
+let growTherapySyncInFlight = false;
 
 export const patientsService = {
 	/**
@@ -2056,6 +2378,38 @@ export const patientsService = {
 					{ eventType, appointmentId: appointment.id, handled: false },
 					StatusCodes.ACCEPTED,
 				);
+		}
+	},
+
+	/**
+	 * Entry point for both trigger paths: the dev node-cron loop (src/index.ts)
+	 * calls this directly every 10 minutes, and the prod route (Vercel Cron →
+	 * GET/POST /api/patients/intake/grow-therapy) calls it per invocation. Both
+	 * end up here so there is exactly one implementation of the sync logic.
+	 */
+	async syncGrowTherapy(icsUrl: string, options: { dryRun?: boolean } = {}): Promise<ServiceResponse<GrowTherapySyncSummary | null>> {
+		if (growTherapySyncInFlight) {
+			logger.warn("Grow Therapy sync — skipped, a previous run is still in flight");
+			return ServiceResponse.success(
+				"Skipped — a previous sync run is still in progress.",
+				null,
+				StatusCodes.ACCEPTED,
+			);
+		}
+
+		growTherapySyncInFlight = true;
+		try {
+			const summary = await runGrowTherapySync(icsUrl, options.dryRun ?? false);
+			return ServiceResponse.success("Grow Therapy calendar sync complete.", summary);
+		} catch (err) {
+			logger.error({ err }, "Grow Therapy sync — failed to fetch/parse the calendar feed");
+			return ServiceResponse.failure(
+				err instanceof Error ? err.message : "Failed to sync the Grow Therapy calendar.",
+				null,
+				StatusCodes.BAD_GATEWAY,
+			);
+		} finally {
+			growTherapySyncInFlight = false;
 		}
 	},
 

@@ -1,8 +1,10 @@
 import type { Request, Response } from "express";
+import { StatusCodes } from "http-status-codes";
 
+import { env } from "@/utils/envConfig";
 import { handleServiceResponse } from "@/utils/httpHandlers";
-import { ServiceResponse } from "@/utils/serviceResponse";
 import { logger } from "@/utils/logger";
+import { ServiceResponse } from "@/utils/serviceResponse";
 import { patientsService } from "./patients.service";
 
 function paramId(req: Request): string {
@@ -182,6 +184,32 @@ export const patientsController = {
 			"Klarity webhook intake received",
 		);
 		const serviceResponse = await patientsService.intakeKlarity(req.body);
+		handleServiceResponse(serviceResponse, res);
+	},
+
+	/**
+	 * Grow Therapy calendar sync — triggered by Vercel Cron in production
+	 * (GET, auth via requireCronSecret) or manually (GET/POST, e.g. from an
+	 * admin settings screen or a curl test). `?dryRun=true` fetches and logs
+	 * without writing anything, for safely testing a newly-configured
+	 * calendar URL.
+	 */
+	async syncGrowTherapy(req: Request, res: Response): Promise<void> {
+		if (!env.GROW_THERAPY_ICS_URL) {
+			handleServiceResponse(
+				ServiceResponse.failure(
+					"GROW_THERAPY_ICS_URL is not configured. Set it in the environment to enable the Grow Therapy calendar sync.",
+					null,
+					StatusCodes.NOT_IMPLEMENTED,
+				),
+				res,
+			);
+			return;
+		}
+
+		const dryRun = req.query.dryRun === "true" || req.body?.dryRun === true;
+		logger.info({ dryRun }, "Grow Therapy calendar sync — starting");
+		const serviceResponse = await patientsService.syncGrowTherapy(env.GROW_THERAPY_ICS_URL, { dryRun });
 		handleServiceResponse(serviceResponse, res);
 	},
 

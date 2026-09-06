@@ -339,6 +339,15 @@ model AppointmentHistory {
   // "appointment.rescheduled") — kept for debugging, not used by any UI logic.
   lastEventType String? @map("last_event_type")
 
+  // Vendor's own "last modified" instant for this specific appointment
+  // occurrence (e.g. a Google Calendar VEVENT's LAST-MODIFIED/DTSTAMP).
+  // Klarity never needs this — its webhook tells us explicitly what kind of
+  // change happened. A polled source (Grow Therapy's .ics feed) has no event
+  // stream, only a snapshot each time — this is what the next poll diffs
+  // against to notice "the provider edited/rescheduled this slot in their
+  // calendar" without re-processing an unchanged event as a change.
+  vendorLastModifiedAt DateTime? @map("vendor_last_modified_at")
+
   // Practitioner seeing the patient, e.g. from Klarity's providerFirstName/
   // providerLastName.
   providerName String? @map("provider_name")

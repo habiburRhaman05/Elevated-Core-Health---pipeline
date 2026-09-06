@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { requireAuth, requireRole } from "@/middlewares/auth";
+import { requireCronSecret } from "@/middlewares/cronAuth";
 import { requireKlarityToken } from "@/middlewares/klarityAuth";
 import { requireVaPermission } from "@/middlewares/vaPermissions";
 import { handleServiceResponse, validateRequest } from "@/utils/httpHandlers";
@@ -79,6 +80,14 @@ patientsPublicRouter.post(
 	validateRequest(KlarityIntakeSchema),
 	patientsController.intakeKlarity,
 );
+
+// Grow Therapy calendar sync — poll-based, not a vendor push. Vercel Cron
+// (production) hits this with GET on the configured schedule (see
+// vercel.json); POST is kept for a manual admin trigger / curl test with
+// ?dryRun=true. Auth is requireCronSecret, not requireKlarityToken/a webhook
+// secret — see that middleware's doc comment for why.
+patientsPublicRouter.get("/intake/grow-therapy", requireCronSecret, patientsController.syncGrowTherapy);
+patientsPublicRouter.post("/intake/grow-therapy", requireCronSecret, patientsController.syncGrowTherapy);
 
 // All other patient routes require JWT auth
 patientsRouter.use(requireAuth);

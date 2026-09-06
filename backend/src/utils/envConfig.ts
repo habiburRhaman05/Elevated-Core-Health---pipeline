@@ -44,6 +44,22 @@ const envSchema = z.object({
 	// Compared against the full Authorization header, so it includes "Bearer ".
 	KLARITY_WEBHOOK_TOKEN: z.string().min(1).default("Bearer wwre2543tetewr3543r4werwer634266"),
 
+	// Grow Therapy's private Google Calendar .ics export ("Secret address in
+	// iCal format"). Optional — same "not configured" pattern as
+	// RESEND_API_KEY/CLOUDINARY_* below — so the sync route/cron just reports
+	// a clear error instead of crashing the app when this hasn't been set yet.
+	// Currently a personal test calendar; swapping in the client's real Grow
+	// Therapy calendar is a config change only, no code change.
+	GROW_THERAPY_ICS_URL: emptyToUndefined(z.string().url().optional()),
+
+	// Guards GET/POST /api/patients/intake/grow-therapy in production — Vercel
+	// Cron automatically sends `Authorization: Bearer <CRON_SECRET>` on every
+	// scheduled invocation when this env var is set (see vercel.json). Left
+	// unset in development, where the route isn't the trigger path at all
+	// (the dev node-cron loop in src/index.ts calls the sync function
+	// in-process) — see requireCronSecret's own doc comment.
+	CRON_SECRET: emptyToUndefined(z.string().min(16).optional()),
+
 	RESEND_API_KEY: emptyToUndefined(z.string().optional()),
 	FROM_EMAIL: z.string().default("notifications@elevatedcorehealth.com"),
 

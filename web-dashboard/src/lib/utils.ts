@@ -5,6 +5,23 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * "grow_therapy" -> "Grow Therapy". `patient.source`/`bookingPlatform` are
+ * raw snake_case vendor identifiers (manual/optimantra/klarity/grow_therapy/
+ * import/...) — a CSS `capitalize` alone only capitalizes the very first
+ * character of the whole string, so a multi-word value like "grow_therapy"
+ * rendered that way reads as "Grow_therapy" with a literal underscore.
+ */
+export function formatSourceLabel(value: string | null | undefined, fallback = "Manual"): string {
+  if (!value) return fallback
+  return value
+    .replace(/_/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .join(" ")
+}
+
 /** Local initials fallback for when a remote avatar image can't be loaded. */
 export function getInitials(name: string | null | undefined): string {
   const parts = (name ?? "").trim().split(/\s+/).filter(Boolean)

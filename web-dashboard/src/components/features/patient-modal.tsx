@@ -96,7 +96,7 @@ import {
   fromPatientWallClockInput,
   toPatientDatetimeLocalValue,
 } from "@/lib/clinic-time"
-import { cn, getInitials } from "@/lib/utils"
+import { cn, getInitials, formatSourceLabel } from "@/lib/utils"
 import { isValidUsPhone, formatUsPhone } from "@/lib/us-phone"
 import { toast } from "sonner"
 import z from "zod"
@@ -1333,7 +1333,7 @@ const isExpired = () => {
                   label="Source"
                   labelColor="text-blue-600"
                 >
-                  <span className="capitalize">{patient.source || "Manual"}</span>
+                  <span>{formatSourceLabel(patient.source)}</span>
                 </SidebarItem>
 
                 <SidebarItem
@@ -2823,7 +2823,7 @@ const isExpired = () => {
                           </div>
                           <div>
                             <p className="text-[10px] font-bold uppercase tracking-wider text-purple-700">Source</p>
-                            <p className="text-sm font-bold text-purple-900 capitalize">{patient.source || "Manual"}</p>
+                            <p className="text-sm font-bold text-purple-900">{formatSourceLabel(patient.source)}</p>
                           </div>
                         </div>
                       </div>
