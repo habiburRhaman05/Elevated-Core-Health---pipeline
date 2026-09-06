@@ -88,8 +88,23 @@ export function PasswordVaultManager() {
         },
         { onSuccess: () => setEntryForm(null) },
       )
-      // Access on an existing entry is edited via the dedicated "Share access"
-      // action, not silently overwritten here — the edit form doesn't touch it.
+      // The edit form shows the same "who can see this" checkboxes as create
+      // (see entry-form-modal.tsx) — they must actually save here too, via the
+      // same setEntryAccess call the dedicated "Share access" action uses.
+      // This used to be skipped ("edited via Share access instead"), which
+      // left a fully interactive but silently no-op control: an admin could
+      // check a box, hit Save, see success, and the grant was never written —
+      // reopening the entry always showed it unchecked again. Only fire the
+      // access mutation when the selection actually changed, so a plain
+      // rename/notes edit doesn't produce a redundant "access changed" audit
+      // entry every time.
+      const previousUserIds = entryForm.access?.map((u) => u.id) ?? []
+      const accessChanged =
+        previousUserIds.length !== values.userIds.length ||
+        !previousUserIds.every((uid) => values.userIds.includes(uid))
+      if (accessChanged) {
+        setEntryAccess.mutate({ id, userIds: values.userIds })
+      }
     }
   }
 
@@ -180,7 +195,7 @@ export function PasswordVaultManager() {
         mode={entryForm === "create" ? "create" : "edit"}
         entry={entryForm === "create" ? null : entryForm}
         groups={groups ?? []}
-        isSaving={createEntry.isPending || updateEntry.isPending}
+        isSaving={createEntry.isPending || updateEntry.isPending || setEntryAccess.isPending}
         onCancel={() => setEntryForm(null)}
         onSave={handleSaveEntry}
       />
