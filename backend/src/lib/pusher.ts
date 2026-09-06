@@ -75,6 +75,35 @@ export function authorizePresenceChannel(
 /** Channel name for conversation-list-level updates (unread count, last message preview). */
 export const MESSAGING_CHANNEL = "private-messaging";
 
+/**
+ * Channel every open pipeline board subscribes to. Triggered after a
+ * BACKGROUND write to patients — the Grow Therapy calendar cron or a Klarity
+ * webhook — so boards re-fetch instantly regardless of which serverless
+ * instance ran the write: unlike an in-process WebSocket broadcast, Pusher is
+ * a hosted broker, so the trigger reaches every connected browser. Payload is
+ * deliberately just a reason string, never patient data (subscribers refetch
+ * their own role-scoped GET /api/patients).
+ */
+export const PATIENTS_BOARD_CHANNEL = "private-patients-board";
+
+/**
+ * Notify every connected board client that patients changed server-side (Grow
+ * Therapy cron sync, Klarity webhook) — NOT a logged-in user's own mutation,
+ * whose own request already invalidates their caches. Same minimal
+ * "nudge, never data" contract as every other trigger in this file.
+ * Never throws — a failed push must not break the sync/webhook that fired it.
+ */
+export function notifyPatientsChanged(reason: string): void {
+	const p = getPusher();
+	if (!p) return;
+
+	try {
+		p.trigger(PATIENTS_BOARD_CHANNEL, "patients.changed", { reason });
+	} catch (err) {
+		logger.warn({ err, reason }, "Pusher trigger failed for patients.changed");
+	}
+}
+
 /** Channel name for per-thread updates (new message in a specific conversation). */
 export function conversationChannel(conversationId: string): string {
 	return `private-conversation-${conversationId}`;

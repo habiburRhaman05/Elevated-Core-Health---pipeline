@@ -6,6 +6,8 @@ import { isAdminOrAbove } from "@/config/roles";
 import { getFirstStageKey, getStageOrder } from "@/config/stages";
 import { audit } from "@/lib/audit";
 import { fetchGrowTherapyEvents, type GrowTherapyEvent } from "@/lib/growTherapyCalendar";
+import { extractPatientFullNameWithGroq } from "@/lib/patientNameExtractor";
+import { notifyPatientsChanged } from "@/lib/pusher";
 import { isPatientInScope, patientScopeFor } from "@/lib/scope";
 import type { AuthenticatedUser } from "@/lib/types";
 import { emailService } from "@/services/email.service";
@@ -604,6 +606,7 @@ const klarityHandlers = {
 				{ patientId: refreshed.id, externalAppointmentId: f.externalAppointmentId },
 				"Klarity created - already known, refreshed in place",
 			);
+			notifyPatientsChanged("klarity_appointment_synced");
 			return ServiceResponse.success("Appointment already known; patient refreshed.", toPatientDto(refreshed));
 		}
 
@@ -649,6 +652,7 @@ const klarityHandlers = {
 				message: "New appointment booked via Klarity (added to this patient's appointment history)",
 				type: "auto",
 			});
+			notifyPatientsChanged("klarity_appointment_created");
 			return ServiceResponse.success(
 				"New appointment added to existing patient's history.",
 				toPatientDto(refreshed),
@@ -735,6 +739,7 @@ const klarityHandlers = {
 			logger.error({ err, patientId: patient.id }, "Failed to send new patient notification emails");
 		}
 
+		notifyPatientsChanged("klarity_patient_created");
 		return ServiceResponse.success("Patient created from Klarity webhook.", toPatientDto(patient), StatusCodes.CREATED);
 	},
 
@@ -810,6 +815,7 @@ const klarityHandlers = {
 			type: "auto",
 		});
 
+		notifyPatientsChanged("klarity_appointment_rescheduled");
 		return ServiceResponse.success("Appointment rescheduled from Klarity webhook.", toPatientDto(refreshed));
 	},
 
@@ -860,6 +866,7 @@ const klarityHandlers = {
 			type: "auto",
 		});
 
+		notifyPatientsChanged("klarity_appointment_canceled");
 		return ServiceResponse.success("Appointment cancelled from Klarity webhook.", toPatientDto(refreshed));
 	},
 
@@ -914,6 +921,7 @@ const klarityHandlers = {
 			type: "auto",
 		});
 
+		notifyPatientsChanged("klarity_visit_status");
 		return ServiceResponse.success(`Visit status set to ${visitStatus} from Klarity webhook.`, toPatientDto(updated));
 	},
 };
@@ -975,14 +983,49 @@ function isUniqueViolationOn(err: unknown, target: string): boolean {
 }
 
 /** Builds the small, non-clinical vendor metadata bag stored in Patient.paymentDetails — same convention mapKlarityFields uses. Never the raw calendar description (see growTherapyCalendar.ts's extractFullPatientName doc comment on why). */
-function buildGrowTherapyMetadata(evt: GrowTherapyEvent) {
+function buildGrowTherapyMetadata(evt: GrowTherapyEvent, nameSource: string) {
 	return {
 		vendor: "grow_therapy",
 		googleUid: evt.googleUid,
 		patientInitials: evt.patientInitials,
 		telehealthLink: evt.telehealthLink,
 		rawTitle: evt.rawTitle,
+		nameSource,
 	};
+}
+
+type GrowNameResolution = {
+	displayName: string;
+	nameSource: "regex" | "groq" | "initials" | "placeholder";
+};
+
+/**
+ * Resolves the display name for a brand-new Grow Therapy card, most specific
+ * first: regex-extracted full name → Groq-extracted full name → title initials
+ * → literal fallback. Groq is only attempted when the regex missed AND a
+ * description exists, and only on this create path (never on every poll tick
+ * for already-synced events) — the dry-run return above means a preview never
+ * spends an AI call either. Every failure inside degrades to null, so the
+ * sync loop can never crash on the AI layer. See patientNameExtractor.ts.
+ */
+async function resolveGrowPatientDisplayName(evt: GrowTherapyEvent): Promise<GrowNameResolution> {
+	const fallback = (): GrowNameResolution =>
+		evt.patientInitials
+			? { displayName: evt.patientInitials, nameSource: "initials" }
+			: { displayName: "Grow Therapy Patient", nameSource: "placeholder" };
+
+	if (evt.fullPatientName) return { displayName: evt.fullPatientName, nameSource: "regex" };
+	if (!evt.rawDescription) return fallback();
+
+	const aiName = await extractPatientFullNameWithGroq(evt.rawTitle, evt.rawDescription, evt.patientInitials);
+	if (aiName) {
+		logger.info(
+			{ eventKey: evt.eventKey, patientName: aiName, initials: evt.patientInitials },
+			"Grow Therapy sync — full patient name recovered via Groq fallback (initials would have been used)",
+		);
+		return { displayName: aiName, nameSource: "groq" };
+	}
+	return fallback();
 }
 
 /**
@@ -1007,19 +1050,43 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 			return { eventKey: evt.eventKey, googleUid: evt.googleUid, status: "CREATED" };
 		}
 
-		console.log("hander name",evt.providerName);
-		
 		const firstStage = await getFirstStageKey();
 		const { assignedTo, assignmentMethod } = await resolveAutoAssign(
 			{ practitionerName: evt.providerName },
 			evt.startTime,
 		);
 
-		const displayName = evt.fullPatientName || evt.patientInitials || "Grow Therapy Patient";
-		console.log("name of pateints",displayName,"handler :",assignedTo);
-		
+		const { displayName, nameSource } = await resolveGrowPatientDisplayName(evt);
+
+		// The full raw payload Google Calendar handed us for this brand-new
+		// occurrence — the breadcrumb for any "why is this patient named X / why
+		// assigned to Y" question. Everything here is already in memory from the
+		// .ics parse; nothing extra is fetched. The raw description is logged at
+		// this one create moment for debugging and is never persisted (the
+		// description is still excluded from buildGrowTherapyMetadata below).
+		logger.info(
+			{
+				eventKey: evt.eventKey,
+				googleUid: evt.googleUid,
+				rawTitle: evt.rawTitle,
+				rawDescription: evt.rawDescription,
+				providerName: evt.providerName,
+				patientInitials: evt.patientInitials,
+				regexFullName: evt.fullPatientName,
+				nameSource,
+				savedName: displayName,
+				appointmentDatetime: evt.startTime,
+				appointmentEndDatetime: evt.endTime,
+				telehealthLink: evt.telehealthLink,
+				lastModifiedTime: evt.lastModifiedTime,
+				assignedTo,
+				assignmentMethod,
+			},
+			"Grow Therapy sync — NEW calendar occurrence payload (raw event data from Google Calendar)",
+		);
+
 		const { firstName, lastName } = splitName(displayName);
-		const vendorMetadata = buildGrowTherapyMetadata(evt);
+		const vendorMetadata = buildGrowTherapyMetadata(evt, nameSource);
 
 	
 		let patient: { id: string };
@@ -1220,6 +1287,16 @@ async function runGrowTherapySync(icsUrl: string, dryRun = false): Promise<GrowT
 		failed: entries.filter((e) => e.status === "FAILED").length,
 		entries,
 	};
+
+	// Open boards refresh instantly instead of needing a manual page reload —
+	// but only when this run actually changed something (a real sync run, never
+	// a dry-run preview, and never when every occurrence was UNCHANGED — the
+	// dev cron fires every minute, so a no-op tick must not spam the board).
+	// The Pusher push is just a nudge; each client refetches its own
+	// role-scoped patient list, so no patient data transits the push itself.
+	if (!dryRun && (summary.created > 0 || summary.updated > 0)) {
+		notifyPatientsChanged("grow_therapy_sync");
+	}
 
 	logger.info(
 		{ scanned: summary.scanned, created: summary.created, updated: summary.updated, unchanged: summary.unchanged, failed: summary.failed, dryRun },

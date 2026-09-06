@@ -60,6 +60,16 @@ const envSchema = z.object({
 	// in-process) — see requireCronSecret's own doc comment.
 	CRON_SECRET: emptyToUndefined(z.string().min(16).optional()),
 
+	// Groq (AI name-extraction fallback for the Grow Therapy .ics sync) —
+	// optional; without it the sync simply falls back to the patient's title
+	// initials when no explicit "Patient:/Client Name:" label is in the
+	// description, never a crash. GROQ_MODEL is a variable because Groq
+	// periodically decommissions model ids — llama3-8b-8192 is already retired,
+	// so the default is today's cheap production GPT-OSS 20B. Override to any
+	// live model id without a redeploy.
+	GROQ_API_KEY: emptyToUndefined(z.string().optional()),
+	GROQ_MODEL: z.string().default("openai/gpt-oss-20b"),
+
 	RESEND_API_KEY: emptyToUndefined(z.string().optional()),
 	FROM_EMAIL: z.string().default("notifications@elevatedcorehealth.com"),
 

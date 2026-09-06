@@ -1,17 +1,30 @@
 "use client"
 
+import { useEffect } from "react"
 import {
   useQuery,
   useMutation,
   useQueryClient,
   keepPreviousData,
 } from "@tanstack/react-query"
+import { getPusherClient, isPusherConfigured } from "@/lib/pusher-client"
 import { PatientsService } from "@/services/patients.service"
 import { QUERY_KEYS } from "@/constants"
 import { useAuth } from "@/hooks/auth/useAuth"
 import { isAdminOrAbove } from "@/lib/roles"
 import type { Patient, PatientStage } from "@/types"
 import { toast } from "sonner"
+
+/**
+ * Bounds how stale an open board can ever get if a Pusher nudge is missed
+ * (backgrounded tab, brief network blip, serverless instance routing). Mirrors
+ * the SMS inbox's 30s fallback poll behind its realtime push — the nudge makes
+ * updates instant; this interval is only the safety net.
+ */
+const PATIENTS_REALTIME_POLL_MS = 30_000
+
+/** Must match backend PATIENTS_BOARD_CHANNEL (backend/src/lib/pusher.ts). */
+const PATIENTS_BOARD_CHANNEL = "private-patients-board"
 
 export function usePatients(stage?: string, options?: { enabled?: boolean }) {
   const { user } = useAuth()
@@ -28,6 +41,11 @@ export function usePatients(stage?: string, options?: { enabled?: boolean }) {
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     enabled: options?.enabled,
+    // Poll as a fallback behind the Pusher `patients.changed` nudge (see
+    // useRealtimePatients) — a missed push must never leave the board stale
+    // until a manual refresh, which is exactly the bug this realtime work
+    // fixes. Same push + fallback-poll pattern as the SMS inbox.
+    refetchInterval: PATIENTS_REALTIME_POLL_MS,
     // Keep the previously-rendered cards on screen during any refetch (e.g.
     // right after Add Patient invalidates the cache) so the board can never
     // flash empty / lose the existing cards while waiting on the network.
@@ -43,6 +61,44 @@ export function usePatients(stage?: string, options?: { enabled?: boolean }) {
       ? undefined
       : (patients: Patient[]) => patients.filter((p) => !p.assignedTo || p.assignedTo === user?.id),
   })
+}
+
+/**
+ * Live board refresh over Pusher — the same hosted broker and `private-`
+ * channel auth the patient SMS inbox uses (useRealtimeMessaging). When a
+ * background sync — the Grow Therapy calendar cron or a Klarity webhook —
+ * creates or updates patients, the backend triggers a `patients.changed`
+ * event on PATIENTS_BOARD_CHANNEL; this hook invalidates the patients +
+ * dashboard-summary caches so every open board re-fetches immediately instead
+ * of waiting for a manual refresh.
+ *
+ * The nudge carries no patient data (just a reason string); each client then
+ * re-runs its own role-scoped GET /api/patients, so a VA only ever refetches
+ * what they're allowed to see. Subscribing is an auth'd call against the same
+ * /api/v1/messaging/pusher/auth endpoint the SMS inbox uses. Degrades to a
+ * no-op when Pusher isn't configured — usePatients' own 30s refetch interval
+ * then bounds staleness instead of leaving the board stuck on manual refresh.
+ */
+export function useRealtimePatients() {
+  const qc = useQueryClient()
+
+  useEffect(() => {
+    if (!isPusherConfigured) return
+    const pusher = getPusherClient()
+    if (!pusher) return
+
+    const channel = pusher.subscribe(PATIENTS_BOARD_CHANNEL)
+    const onChange = () => {
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.PATIENTS.ALL })
+      qc.invalidateQueries({ queryKey: QUERY_KEYS.DASHBOARD.SUMMARY })
+    }
+    channel.bind("patients.changed", onChange)
+
+    return () => {
+      channel.unbind("patients.changed", onChange)
+      pusher.unsubscribe(PATIENTS_BOARD_CHANNEL)
+    }
+  }, [qc])
 }
 
 export function usePatient(id: string) {

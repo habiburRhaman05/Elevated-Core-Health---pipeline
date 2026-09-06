@@ -8,7 +8,7 @@ import { BoardViewToolbar, useBoardView } from "@/components/features/board-view
 import { StatusBar } from "@/components/features/status-bar"
 import { ImportDialog } from "@/components/features/import-dialog"
 import { AddPatientDialog } from "@/components/features/add-patient-dialog"
-import { usePatients } from "@/hooks/query/usePatients"
+import { usePatients, useRealtimePatients } from "@/hooks/query/usePatients"
 import { EMPTY_BOARD_FILTERS, type BoardFilters } from "@/lib/board-filters"
 import { LayoutGrid } from "lucide-react"
 
@@ -17,6 +17,10 @@ export default function VABoardPage() {
   const claimPatientId = searchParams.get("claim")
   const [filters, setFilters] = useState<BoardFilters>(EMPTY_BOARD_FILTERS)
   const [view, changeView] = useBoardView()
+  // Live-refresh the board via Pusher when a backend sync (e.g. the Grow
+  // Therapy calendar cron or a Klarity webhook) creates/updates patients — no
+  // manual reload needed. See useRealtimePatients in usePatients.ts.
+  useRealtimePatients()
   // Live total for the count chip — same cached query the board uses, so this
   // adds no extra network round-trip.
   const { data: patients } = usePatients()

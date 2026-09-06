@@ -1,7 +1,13 @@
 "use client"
 
 import { useMemo, useRef, useState } from "react"
-import { usePatients, useMoveStage, useListVas, useChecklistItems } from "@/hooks/query/usePatients"
+import {
+  usePatients,
+  useRealtimePatients,
+  useMoveStage,
+  useListVas,
+  useChecklistItems,
+} from "@/hooks/query/usePatients"
 import { toast } from "sonner"
 import { PatientCard } from "@/components/features/patient-card"
 import { PatientModal } from "@/components/features/patient-modal"
@@ -21,6 +27,10 @@ import { AlertTriangle, CheckCircle2, Filter, Loader2, RefreshCw, SearchX, Shiel
 import { cn } from "@/lib/utils"
 
 export default function AdminBoardPage() {
+  // Live-refresh the board via Pusher when a backend sync (e.g. the Grow
+  // Therapy calendar cron or a Klarity webhook) creates/updates patients — no
+  // manual reload needed. See useRealtimePatients in usePatients.ts.
+  useRealtimePatients()
   const { data: patients, isLoading, error, refetch } = usePatients()
   const { data: vas } = useListVas()
   const moveStage = useMoveStage()

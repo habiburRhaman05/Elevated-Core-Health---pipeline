@@ -33,6 +33,14 @@ export interface GrowTherapyEvent {
 	/** ICS LAST-MODIFIED, falling back to DTSTAMP, falling back to the start time. This is what the next poll diffs against. */
 	lastModifiedTime: Date;
 	rawTitle: string;
+	/**
+	 * Raw iCal description body, for in-memory use only — feeds the Groq
+	 * full-name fallback (patientNameExtractor.ts) when the regex layer finds
+	 * no labeled name on a first-time sync. Deliberately never persisted:
+	 * buildGrowTherapyMetadata() (the caller) omits it, so the description
+	 * never touches the database.
+	 */
+	rawDescription: string;
 }
 
 /** node-ical hands back plain strings OR `{ params, val }` when a property carries iCal parameters (e.g. `SUMMARY;LANGUAGE=de:...`). Normalize to a plain string either way. */
@@ -199,6 +207,7 @@ export async function fetchGrowTherapyEvents(icsUrl: string): Promise<GrowTherap
 				telehealthLink,
 				lastModifiedTime,
 				rawTitle: summary,
+				rawDescription: description,
 			});
 		}
 	}
