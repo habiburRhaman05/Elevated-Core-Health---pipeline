@@ -995,10 +995,10 @@ const isExpired = () => {
                 <div className="min-w-0">
                   <h2 className="text-lg sm:text-2xl font-bold text-white truncate">{patient.name}</h2>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-sm text-white/90">
-                    <span className="inline-flex items-center gap-1.5">
+                    {/* <span className="inline-flex items-center gap-1.5">
                       <Globe className="w-3.5 h-3.5" />
                       {patient.source === "webhook" ? "Web" : "Manual"}
-                    </span>
+                    </span> */}
                     {patient.phone && (
                       <span className="inline-flex items-center gap-1.5">
                         <Phone className="w-3.5 h-3.5" />
