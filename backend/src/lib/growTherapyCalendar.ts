@@ -23,8 +23,18 @@ export interface GrowTherapyEvent {
 	providerName: string | null;
 	/** Whatever sits between "<>" and "Telehealth" in the title, verbatim (not assumed to be exactly 2 letters — real data includes things like "7.A"). */
 	patientInitials: string | null;
-	/** Only set when the description contains an explicit "Patient:"/"Client:" label — never a guess. Falls back to patientInitials at the call site. */
+	/**
+	 * The patient's real full name, when we actually have one — either an
+	 * explicit "Patient:"/"Client:" label in the description, OR (see
+	 * `titleLeftIsPatientName`) the title's left-of-"<>" text when its
+	 * initials match the right-hand `patientInitials` exactly (Grow Therapy's
+	 * own patient-facing invites repeat the patient's own name on both sides
+	 * of "<>", e.g. "Chase Brighton <> C.B Telehealth Appointment"). Never a
+	 * guess — falls back to patientInitials at the call site.
+	 */
 	fullPatientName: string | null;
+	/** Attendee email pulled straight off the ICS event (never the organizer's own address), or null if the event has no attendee. */
+	patientEmail: string | null;
 	/** YYYY-MM-DD, for logging/display only. */
 	appointmentDate: string;
 	startTime: Date;
@@ -53,17 +63,46 @@ function paramValueToString(value: ParameterValue | undefined | null): string {
 	return String(value);
 }
 
-const GROW_THERAPY_KEYWORDS = ["growtherapystaging", "growtherapy", "grow"];
+// Real Grow Therapy invites NEVER put the word "grow" in the title — see
+// parseGrowTherapyTitle's doc comment for a real example. The only reliable
+// signal is the telehealth/portal link's actual hostname, which only ever
+// shows up in `location` or `description`. A loose "does this text contain
+// the word grow" scan across the title too is both a false-positive risk
+// (any unrelated event that happens to mention "grow") and gave a false
+// sense of safety while doing nothing for real invites — this replaces it.
+const GROW_THERAPY_DOMAINS = ["growtherapystaging.com", "growtherapy.com"];
 
-/** Case-insensitive match across summary + description + location, per the client's explicit filter spec (also matches the staging domain so test bookings aren't silently dropped). */
-export function isGrowTherapyEvent(summary: string, description: string, location: string): boolean {
-	const blob = `${summary} ${description} ${location}`.toLowerCase();
-	return GROW_THERAPY_KEYWORDS.some((kw) => blob.includes(kw));
+/** Every http(s) URL found in `text`, in order. */
+function extractUrls(text: string): string[] {
+	return text.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
+}
+
+/** True when `url`'s hostname is a Grow Therapy domain or any subdomain of one (covers `telehealth.`, `provider.`, `www.`, etc.). */
+function hostIsGrowTherapy(url: string): boolean {
+	try {
+		const host = new URL(url).hostname.toLowerCase();
+		return GROW_THERAPY_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+	} catch {
+		return false;
+	}
+}
+
+/** Detects a Grow Therapy event strictly by the hostname of a link in its location/description — never by scanning free text for the word "grow". */
+export function isGrowTherapyEvent(description: string, location: string): boolean {
+	const urls = [...extractUrls(location), ...extractUrls(description)];
+	return urls.some(hostIsGrowTherapy);
 }
 
 /**
  * "Abbi Abrams <> O.B Telehealth Appointment" ->
- *   { providerName: "Abbi Abrams", patientInitials: "O.B" }
+ *   { leftName: "Abbi Abrams", patientInitials: "O.B" }
+ *
+ * The left side is NOT always the provider — see `titleLeftIsPatientName`
+ * immediately below for the real, confirmed counter-example: Grow Therapy's
+ * own patient-facing calendar invites repeat the PATIENT's own name on the
+ * left ("Chase Brighton <> C.B Telehealth Appointment" — C.B are literally
+ * Chase Brighton's initials). This function only does the mechanical split;
+ * the caller decides which role the left side plays.
  *
  * Deliberately loose on the right-hand side: real titles include odd values
  * like "7.A", not just letter-dot-letter, so this takes whatever text sits
@@ -71,34 +110,104 @@ export function isGrowTherapyEvent(summary: string, description: string, locatio
  * strict `[A-Z]\.[A-Z]` shape.
  */
 export function parseGrowTherapyTitle(summary: string): {
-	providerName: string | null;
+	leftName: string | null;
 	patientInitials: string | null;
 } {
 	const parts = summary.split("<>");
-	if (parts.length < 2) return { providerName: null, patientInitials: null };
+	if (parts.length < 2) return { leftName: null, patientInitials: null };
 
-	const providerName = parts[0].trim() || null;
+	const leftName = parts[0].trim() || null;
 	// Re-join in case "<>" appears more than once — only the first split matters.
 	const rest = parts.slice(1).join("<>");
 	const beforeTelehealth = rest.match(/^(.*?)telehealth/i);
 	const patientInitials = (beforeTelehealth ? beforeTelehealth[1] : rest).trim() || null;
 
-	return { providerName, patientInitials };
+	return { leftName, patientInitials };
+}
+
+/** "Chase Brighton" -> "cb"; used only to compare against a title's initials, never persisted or shown. */
+function deriveInitials(fullName: string): string {
+	return fullName
+		.split(/\s+/)
+		.filter(Boolean)
+		.map((word) => word[0]?.toLowerCase() ?? "")
+		.join("");
+}
+
+/** "C.B" / "7.A" / "cb" -> letters only, lowercased, for a tolerant comparison against deriveInitials(). */
+function normalizeInitials(raw: string): string {
+	return raw.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+/**
+ * True when the title's left-hand name is actually the PATIENT's own full
+ * name rather than the provider's — confirmed real-world case: Grow Therapy
+ * sends the patient THEIR OWN calendar invite titled
+ * "Chase Brighton <> C.B Telehealth Appointment", where "C.B" are exactly
+ * Chase Brighton's initials. Compare against a genuine provider title like
+ * "Donna Rhodes <> S.N Telehealth Appointment" (D.R != S.N — Donna Rhodes
+ * really is the provider there) or "Abbi Abrams <> O.B" (A.A != O.B) — both
+ * correctly fail this check. Requires at least 2 derived letters so a
+ * one-character/odd initials value (e.g. a lone "7") can never accidentally
+ * match and misfire.
+ */
+export function titleLeftIsPatientName(leftName: string | null, patientInitials: string | null): boolean {
+	if (!leftName || !patientInitials) return false;
+	const derived = deriveInitials(leftName);
+	if (derived.length < 2) return false;
+	return derived === normalizeInitials(patientInitials);
 }
 
 /**
  * Best-effort scan of the event description for an explicitly labeled full
- * name ("Patient: John Smith" / "Client - John Smith"). Deliberately narrow:
+ * name ("Patient: John Smith" / "Client: John Smith"). Deliberately narrow:
  * grabbing the wrong line of free-text calendar description as a "name" is
  * worse than just falling back to initials, and per CLAUDE.md this app must
  * never go hunting through free text for more than it's explicitly told is
  * there — the raw description is never stored, only this narrow extraction.
+ *
+ * Two hardening steps here fix a real production bug: a patient card ended
+ * up saved with the literal name "calendar-invite". Grow Therapy's own
+ * description text is full of URLs like ".../client-login" and
+ * "...?utm_source=client-calendar-invite" — the OLD regex accepted a bare
+ * hyphen as a label separator, so "client-calendar-invite" parsed as
+ * "client" + "-" + "calendar-invite" and got read as a labeled patient name.
+ * Fix: (1) strip every URL out before searching at all, and (2) only accept
+ * ":" as the separator — a real "Patient:"/"Client:" label always uses one,
+ * URL slugs never do.
  */
 export function extractFullPatientName(description: string): string | null {
-	const match = description.match(/(?:patient|client)\s*(?:name)?\s*[:-]\s*([A-Za-z][A-Za-z .'-]{1,80})/i);
+	const withoutUrls = description.replace(/https?:\/\/[^\s<>"']+/gi, " ");
+	const match = withoutUrls.match(/(?:patient|client)\s*(?:name)?\s*:\s*([A-Za-z][A-Za-z .'-]{1,80})/i);
 	if (!match) return null;
 	const name = match[1].trim();
 	return name.length > 0 ? name : null;
+}
+
+/** node-ical hands attendee/organizer values back as "mailto:someone@example.com" (optionally with a display name in .params.CN) — this strips the scheme and validates it still looks like an address. */
+function normalizeMailto(raw: string): string | null {
+	if (!raw) return null;
+	const stripped = raw.replace(/^mailto:/i, "").trim().toLowerCase();
+	return stripped.includes("@") ? stripped : null;
+}
+
+/**
+ * The patient's email, read straight from the calendar event's ATTENDEE
+ * field — e.g. Grow Therapy's own patient-facing invite lists the patient as
+ * the sole attendee ("selah7676@gmail.com"). Deliberately excludes the
+ * organizer's own address (that's Grow Therapy's system/practice account,
+ * never the patient) and returns the first remaining attendee otherwise.
+ */
+export function extractAttendeeEmail(event: VEvent): string | null {
+	const organizerEmail = normalizeMailto(paramValueToString(event.organizer as ParameterValue | undefined));
+	const raw = event.attendee as VEvent["attendee"];
+	if (!raw) return null;
+	const list = Array.isArray(raw) ? raw : [raw];
+	for (const attendee of list) {
+		const email = normalizeMailto(paramValueToString(attendee as ParameterValue | undefined));
+		if (email && email !== organizerEmail) return email;
+	}
+	return null;
 }
 
 /** First http(s) link found in the description or location — Grow Therapy's telehealth join URL. */
@@ -184,11 +293,21 @@ export async function fetchGrowTherapyEvents(icsUrl: string): Promise<GrowTherap
 			const description = paramValueToString(event.description);
 			const location = paramValueToString(event.location);
 
-			if (!isGrowTherapyEvent(summary, description, location)) continue;
+			if (!isGrowTherapyEvent(description, location)) continue;
 			if (!start) continue;
 
-			const { providerName, patientInitials } = parseGrowTherapyTitle(summary);
-			const fullPatientName = description ? extractFullPatientName(description) : null;
+			const { leftName, patientInitials } = parseGrowTherapyTitle(summary);
+			// Explicit "Patient:"/"Client:" label wins when present (most
+			// authoritative); otherwise fall back to the title's left side ONLY
+			// when its initials match the patient's — see titleLeftIsPatientName.
+			const regexFullName = description ? extractFullPatientName(description) : null;
+			const titleIsPatientName = titleLeftIsPatientName(leftName, patientInitials);
+			const fullPatientName = regexFullName ?? (titleIsPatientName ? leftName : null);
+			// The left side is only a real provider name when it ISN'T actually
+			// the patient's own name repeated — never hand the patient's name to
+			// auto-assign as if it were a staff member to match against.
+			const providerName = titleIsPatientName ? null : leftName;
+			const patientEmail = extractAttendeeEmail(event);
 			const telehealthLink = extractTelehealthLink(description, location);
 			const lastModifiedTime = event.lastmodified ?? event.dtstamp ?? start;
 			const uid = event.uid || item.uid;
@@ -201,6 +320,7 @@ export async function fetchGrowTherapyEvents(icsUrl: string): Promise<GrowTherap
 				providerName,
 				patientInitials,
 				fullPatientName,
+				patientEmail,
 				appointmentDate: start.toISOString().slice(0, 10),
 				startTime: start,
 				endTime: end,

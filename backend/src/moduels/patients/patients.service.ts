@@ -6,7 +6,6 @@ import { isAdminOrAbove } from "@/config/roles";
 import { getFirstStageKey, getStageOrder } from "@/config/stages";
 import { audit } from "@/lib/audit";
 import { fetchGrowTherapyEvents, type GrowTherapyEvent } from "@/lib/growTherapyCalendar";
-import { extractPatientFullNameWithGroq } from "@/lib/patientNameExtractor";
 import { notifyPatientsChanged } from "@/lib/pusher";
 import { isPatientInScope, patientScopeFor } from "@/lib/scope";
 import type { AuthenticatedUser } from "@/lib/types";
@@ -996,36 +995,28 @@ function buildGrowTherapyMetadata(evt: GrowTherapyEvent, nameSource: string) {
 
 type GrowNameResolution = {
 	displayName: string;
-	nameSource: "regex" | "groq" | "initials" | "placeholder";
+	nameSource: "extracted" | "initials" | "placeholder";
 };
 
 /**
- * Resolves the display name for a brand-new Grow Therapy card, most specific
- * first: regex-extracted full name → Groq-extracted full name → title initials
- * → literal fallback. Groq is only attempted when the regex missed AND a
- * description exists, and only on this create path (never on every poll tick
- * for already-synced events) — the dry-run return above means a preview never
- * spends an AI call either. Every failure inside degrades to null, so the
- * sync loop can never crash on the AI layer. See patientNameExtractor.ts.
+ * Resolves the display name for a brand-new Grow Therapy card. Purely
+ * deterministic, no AI call — `evt.fullPatientName` (see
+ * growTherapyCalendar.ts) already reflects the most specific real name we
+ * could find: an explicit "Patient:"/"Client:" label in the description, or
+ * the title's own left-hand name when it's confirmed to be the patient
+ * (initials match — see titleLeftIsPatientName). Falls back to the bare
+ * initials Grow Therapy itself shows in the title, never a guess.
+ *
+ * A previous version of this asked Groq to guess a name from free text when
+ * neither of those existed. Removed: every real event seen in practice is
+ * fully resolved by the two deterministic signals above, so the AI call was
+ * dead weight that only added latency, cost, and a hallucination surface for
+ * zero observed benefit — pure function logic covers it.
  */
-async function resolveGrowPatientDisplayName(evt: GrowTherapyEvent): Promise<GrowNameResolution> {
-	const fallback = (): GrowNameResolution =>
-		evt.patientInitials
-			? { displayName: evt.patientInitials, nameSource: "initials" }
-			: { displayName: "Grow Therapy Patient", nameSource: "placeholder" };
-
-	if (evt.fullPatientName) return { displayName: evt.fullPatientName, nameSource: "regex" };
-	if (!evt.rawDescription) return fallback();
-
-	const aiName = await extractPatientFullNameWithGroq(evt.rawTitle, evt.rawDescription, evt.patientInitials);
-	if (aiName) {
-		logger.info(
-			{ eventKey: evt.eventKey, patientName: aiName, initials: evt.patientInitials },
-			"Grow Therapy sync — full patient name recovered via Groq fallback (initials would have been used)",
-		);
-		return { displayName: aiName, nameSource: "groq" };
-	}
-	return fallback();
+function resolveGrowPatientDisplayName(evt: GrowTherapyEvent): GrowNameResolution {
+	if (evt.fullPatientName) return { displayName: evt.fullPatientName, nameSource: "extracted" };
+	if (evt.patientInitials) return { displayName: evt.patientInitials, nameSource: "initials" };
+	return { displayName: "Grow Therapy Patient", nameSource: "placeholder" };
 }
 
 /**
@@ -1056,7 +1047,7 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 			evt.startTime,
 		);
 
-		const { displayName, nameSource } = await resolveGrowPatientDisplayName(evt);
+		const { displayName, nameSource } = resolveGrowPatientDisplayName(evt);
 
 		// The full raw payload Google Calendar handed us for this brand-new
 		// occurrence — the breadcrumb for any "why is this patient named X / why
@@ -1096,6 +1087,7 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 					data: {
 						firstName: firstName || displayName,
 						lastName,
+						email: evt.patientEmail,
 						stage: firstStage,
 						appointmentDatetime: evt.startTime,
 						appointmentEndDatetime: evt.endTime,
