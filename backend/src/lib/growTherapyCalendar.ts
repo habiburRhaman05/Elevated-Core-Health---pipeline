@@ -4,10 +4,13 @@ import ical from "node-ical";
 import { logger } from "@/utils/logger";
 
 /**
- * One synced-worthy occurrence pulled from the Grow Therapy Google Calendar
- * .ics feed. "Occurrence" and not "event" deliberately — a recurring booking
- * (e.g. "Weekly on Wednesday, 4 times") shares ONE calendar UID across every
- * instance, so `googleUid` alone cannot be the sync identity (see `eventKey`).
+ * One synced-worthy occurrence pulled from the shared Google Calendar .ics
+ * feed — despite the module name (kept as-is to avoid renaming the already
+ * shipped route/env var), this now also recognizes Headway events on the
+ * same feed; see `vendor`. "Occurrence" and not "event" deliberately — a
+ * recurring booking (e.g. "Weekly on Wednesday, 4 times") shares ONE calendar
+ * UID across every instance, so `googleUid` alone cannot be the sync identity
+ * (see `eventKey`).
  */
 export interface GrowTherapyEvent {
 	/**
@@ -20,6 +23,8 @@ export interface GrowTherapyEvent {
 	eventKey: string;
 	/** Raw ICS UID — shared across every occurrence of a recurring series. */
 	googleUid: string;
+	/** Which vendor this occurrence came from — see `detectVendor`. */
+	vendor: CalendarEventVendor;
 	providerName: string | null;
 	/** Whatever sits between "<>" and "Telehealth" in the title, verbatim (not assumed to be exactly 2 letters — real data includes things like "7.A"). */
 	patientInitials: string | null;
@@ -63,6 +68,9 @@ function paramValueToString(value: ParameterValue | undefined | null): string {
 	return String(value);
 }
 
+/** Which booking vendor synced this calendar occurrence — drives name/email resolution and is stored verbatim as Patient.source/bookingPlatform. */
+export type CalendarEventVendor = "grow_therapy" | "headway";
+
 // Real Grow Therapy invites NEVER put the word "grow" in the title — see
 // parseGrowTherapyTitle's doc comment for a real example. The only reliable
 // signal is the telehealth/portal link's actual hostname, which only ever
@@ -72,16 +80,22 @@ function paramValueToString(value: ParameterValue | undefined | null): string {
 // sense of safety while doing nothing for real invites — this replaces it.
 const GROW_THERAPY_DOMAINS = ["growtherapystaging.com", "growtherapy.com"];
 
+// Headway's calendar events link out to their own scheduling portal
+// (sigmund.headway.co) — that link, not any title text, is the only reliable
+// signal a Headway event exists at all (its title is the same generic
+// "Headway Patient Appointment" string on every single event).
+const HEADWAY_DOMAINS = ["headway.co"];
+
 /** Every http(s) URL found in `text`, in order. */
 function extractUrls(text: string): string[] {
 	return text.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
 }
 
-/** True when `url`'s hostname is a Grow Therapy domain or any subdomain of one (covers `telehealth.`, `provider.`, `www.`, etc.). */
-function hostIsGrowTherapy(url: string): boolean {
+/** True when `url`'s hostname is exactly one of `domains` or any subdomain of one (covers `telehealth.`, `provider.`, `sigmund.`, etc.). */
+function hostMatchesDomain(url: string, domains: string[]): boolean {
 	try {
 		const host = new URL(url).hostname.toLowerCase();
-		return GROW_THERAPY_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+		return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 	} catch {
 		return false;
 	}
@@ -90,7 +104,20 @@ function hostIsGrowTherapy(url: string): boolean {
 /** Detects a Grow Therapy event strictly by the hostname of a link in its location/description — never by scanning free text for the word "grow". */
 export function isGrowTherapyEvent(description: string, location: string): boolean {
 	const urls = [...extractUrls(location), ...extractUrls(description)];
-	return urls.some(hostIsGrowTherapy);
+	return urls.some((url) => hostMatchesDomain(url, GROW_THERAPY_DOMAINS));
+}
+
+/** Detects a Headway event the same way — by its portal link's hostname, never by title text (Headway's title carries no vendor-identifying word at all). */
+export function isHeadwayEvent(description: string, location: string): boolean {
+	const urls = [...extractUrls(location), ...extractUrls(description)];
+	return urls.some((url) => hostMatchesDomain(url, HEADWAY_DOMAINS));
+}
+
+/** Which vendor (if any) this occurrence belongs to, checked in a fixed order so one event can never match both. */
+function detectVendor(description: string, location: string): CalendarEventVendor | null {
+	if (isGrowTherapyEvent(description, location)) return "grow_therapy";
+	if (isHeadwayEvent(description, location)) return "headway";
+	return null;
 }
 
 /**
@@ -293,9 +320,14 @@ export async function fetchGrowTherapyEvents(icsUrl: string): Promise<GrowTherap
 			const description = paramValueToString(event.description);
 			const location = paramValueToString(event.location);
 
-			if (!isGrowTherapyEvent(description, location)) continue;
+			const vendor = detectVendor(description, location);
+			if (!vendor) continue;
 			if (!start) continue;
 
+			// Headway's title ("Headway Patient Appointment") never contains
+			// "<>", so parseGrowTherapyTitle naturally yields nulls for it — no
+			// special-casing needed here beyond what the vendor check above
+			// already gates.
 			const { leftName, patientInitials } = parseGrowTherapyTitle(summary);
 			// Explicit "Patient:"/"Client:" label wins when present (most
 			// authoritative); otherwise fall back to the title's left side ONLY
@@ -307,6 +339,8 @@ export async function fetchGrowTherapyEvents(icsUrl: string): Promise<GrowTherap
 			// the patient's own name repeated — never hand the patient's name to
 			// auto-assign as if it were a staff member to match against.
 			const providerName = titleIsPatientName ? null : leftName;
+			// Headway's events carry no ATTENDEE at all (confirmed against the
+			// real feed) — extractAttendeeEmail correctly returns null for them.
 			const patientEmail = extractAttendeeEmail(event);
 			const telehealthLink = extractTelehealthLink(description, location);
 			const lastModifiedTime = event.lastmodified ?? event.dtstamp ?? start;
@@ -317,6 +351,7 @@ export async function fetchGrowTherapyEvents(icsUrl: string): Promise<GrowTherap
 			events.push({
 				eventKey: isRecurringSeries ? `${uid}::${slotIdentity}` : uid,
 				googleUid: uid,
+				vendor,
 				providerName,
 				patientInitials,
 				fullPatientName,

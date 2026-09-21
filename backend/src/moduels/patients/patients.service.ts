@@ -984,7 +984,7 @@ function isUniqueViolationOn(err: unknown, target: string): boolean {
 /** Builds the small, non-clinical vendor metadata bag stored in Patient.paymentDetails — same convention mapKlarityFields uses. Never the raw calendar description (see growTherapyCalendar.ts's extractFullPatientName doc comment on why). */
 function buildGrowTherapyMetadata(evt: GrowTherapyEvent, nameSource: string) {
 	return {
-		vendor: "grow_therapy",
+		vendor: evt.vendor,
 		googleUid: evt.googleUid,
 		patientInitials: evt.patientInitials,
 		telehealthLink: evt.telehealthLink,
@@ -999,7 +999,7 @@ type GrowNameResolution = {
 };
 
 /**
- * Resolves the display name for a brand-new Grow Therapy card. Purely
+ * Resolves the display name for a brand-new calendar-synced card. Purely
  * deterministic, no AI call — `evt.fullPatientName` (see
  * growTherapyCalendar.ts) already reflects the most specific real name we
  * could find: an explicit "Patient:"/"Client:" label in the description, or
@@ -1007,15 +1007,27 @@ type GrowNameResolution = {
  * (initials match — see titleLeftIsPatientName). Falls back to the bare
  * initials Grow Therapy itself shows in the title, never a guess.
  *
+ * Headway is a separate case entirely: confirmed against the real feed, its
+ * events carry ZERO patient-identifying data — no initials, no attendee, no
+ * labeled name, and every event's title is the identical generic string
+ * "Headway Patient Appointment". `evt.fullPatientName`/`patientInitials` are
+ * therefore always null for it, so this falls through to a placeholder built
+ * from the event's own Google Calendar uid — the ONLY thing that's actually
+ * distinct per occurrence — so multiple Headway cards don't all render as
+ * indistinguishable duplicates of each other.
+ *
  * A previous version of this asked Groq to guess a name from free text when
  * neither of those existed. Removed: every real event seen in practice is
- * fully resolved by the two deterministic signals above, so the AI call was
- * dead weight that only added latency, cost, and a hallucination surface for
- * zero observed benefit — pure function logic covers it.
+ * fully resolved by the deterministic signals above, so the AI call was dead
+ * weight that only added latency, cost, and a hallucination surface for zero
+ * observed benefit — pure function logic covers it.
  */
 function resolveGrowPatientDisplayName(evt: GrowTherapyEvent): GrowNameResolution {
 	if (evt.fullPatientName) return { displayName: evt.fullPatientName, nameSource: "extracted" };
 	if (evt.patientInitials) return { displayName: evt.patientInitials, nameSource: "initials" };
+	if (evt.vendor === "headway") {
+		return { displayName: `Headway Patient ${evt.googleUid.slice(0, 3)}`, nameSource: "placeholder" };
+	}
 	return { displayName: "Grow Therapy Patient", nameSource: "placeholder" };
 }
 
@@ -1092,8 +1104,8 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 						appointmentDatetime: evt.startTime,
 						appointmentEndDatetime: evt.endTime,
 						externalAppointmentId: evt.eventKey,
-						bookingPlatform: "grow_therapy",
-						source: "grow_therapy",
+						bookingPlatform: evt.vendor,
+						source: evt.vendor,
 						paymentDetails: JSON.parse(JSON.stringify(vendorMetadata)),
 						checklistState: {},
 						notes: evt.providerName ? `Practitioner: ${evt.providerName}` : null,
@@ -1108,7 +1120,7 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 						appointmentDatetime: evt.startTime,
 						appointmentEndDatetime: evt.endTime,
 						status: "scheduled",
-						source: "grow_therapy",
+						source: evt.vendor,
 						lastEventType: "calendar.synced",
 						vendorLastModifiedAt: evt.lastModifiedTime,
 						providerName: evt.providerName,
@@ -1132,9 +1144,10 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 		}
 
 		logger.info(
-			{ patientId: patient.id, eventKey: evt.eventKey, assignedTo, assignmentMethod },
+			{ patientId: patient.id, eventKey: evt.eventKey, vendor: evt.vendor, assignedTo, assignmentMethod },
 			"Grow Therapy sync — new appointment, patient created at onboarding",
 		);
+		const vendorLabel = evt.vendor === "headway" ? "Headway" : "Grow Therapy";
 		await audit({
 			patientId: patient.id,
 			user: null,
@@ -1142,8 +1155,8 @@ async function syncOneGrowTherapyEvent(evt: GrowTherapyEvent, dryRun: boolean): 
 			category: "appointment",
 			entityType: "patient",
 			entityId: patient.id,
-			newValue: { source: "grow_therapy", eventKey: evt.eventKey, appointmentDatetime: evt.startTime, assignmentMethod },
-			message: `New patient auto-created from Grow Therapy calendar sync${assignedTo ? ` — Auto-assigned via ${assignmentMethod}` : ""}`,
+			newValue: { source: evt.vendor, eventKey: evt.eventKey, appointmentDatetime: evt.startTime, assignmentMethod },
+			message: `New patient auto-created from ${vendorLabel} calendar sync${assignedTo ? ` — Auto-assigned via ${assignmentMethod}` : ""}`,
 			type: "auto",
 		});
 
