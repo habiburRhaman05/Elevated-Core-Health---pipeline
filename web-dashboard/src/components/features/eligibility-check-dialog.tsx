@@ -4,23 +4,21 @@ import { useEffect, useRef, useState } from "react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { DatePicker, getMaxDobDate } from "@/components/ui/date-time-picker"
-import { Loader2, ShieldCheck, RotateCcw, CheckCircle2, XCircle, AlertTriangle } from "lucide-react"
+import { Loader2, ShieldCheck, RotateCcw, CheckCircle2, XCircle } from "lucide-react"
 import { useCheckEligibility } from "@/hooks/query/usePatients"
 import { SelectOrOther } from "@/components/shared/select-or-other"
 import { INSURANCE_PROVIDER_OPTIONS, VOB_LABELS } from "@/lib/patient-options"
+import { cleanEligibilityError } from "@/lib/eligibility"
 import type { Patient } from "@/types"
 
 // ---------------------------------------------------------------------------
-// Eligibility Check Dialog — demo flow.
+// Eligibility Check Dialog.
 //
-// Phase 1 (form):    dummy insurance fields a VA would read off the intake /
-//                    insurance card (payer, member ID, group #, DOB).
-// Phase 2 (checking): simulated "contacting payer" loading. A minimum display
-//                    time keeps the checking state clearly visible while the
-//                    real API call runs underneath in parallel.
-// Phase 3 (result):  the backend's verdict with the VOB snapshot. With no
-//                    eligibility rules configured the backend returns
-//                    `eligible` (true) — the intended demo result.
+// Phase 1 (form):    insurance fields a VA reads off the insurance card
+//                    (payer, member ID, group #, DOB).
+// Phase 2 (checking): waiting on the backend, which queries the payer via Stedi.
+// Phase 3 (result):  the backend's verdict (eligible / not eligible, with the
+//                    reason) and the VOB snapshot returned by the payer.
 // ---------------------------------------------------------------------------
 
 type Phase = "form" | "checking" | "result" | "error"
@@ -65,10 +63,17 @@ export function EligibilityCheckDialog({ patient, open, onClose }: EligibilityCh
       !!patient.insuranceProvider &&
         !INSURANCE_PROVIDER_OPTIONS.includes(patient.insuranceProvider),
     )
-    setMemberId("")
-    setGroupNumber("")
-    setDob("")
-  }, [open, patient.id, patient.insuranceProvider])
+    const saved = (patient.paymentDetails ?? {}) as Record<string, unknown>
+    setMemberId(typeof saved.memberId === "string" ? saved.memberId : "")
+    setGroupNumber(typeof saved.groupNumber === "string" ? saved.groupNumber : "")
+    setDob(
+      typeof saved.dateOfBirth === "string"
+        ? saved.dateOfBirth
+        : patient.dateOfBirth
+          ? String(patient.dateOfBirth).slice(0, 10)
+          : "",
+    )
+  }, [open, patient.id, patient.insuranceProvider, patient.paymentDetails, patient.dateOfBirth])
 
   // Rotate the checking steps while the dummy loading is on screen.
   useEffect(() => {
@@ -88,33 +93,28 @@ export function EligibilityCheckDialog({ patient, open, onClose }: EligibilityCh
     if (!open || submittingRef.current) return
     submittingRef.current = true
     setPhase("checking")
-    // Dummy minimum loading so the demo clearly shows the checking state,
-    // while the real backend call runs underneath in parallel.
-    const minLoading = new Promise((resolve) => setTimeout(resolve, 2400))
     try {
-      const [updated] = await Promise.all([
-        checkEligibility.mutateAsync({
-          id: patient.id,
-          insuranceProvider: insuranceProvider.trim() || null,
-          paymentDetails: {
-            memberId: memberId.trim() || null,
-            groupNumber: groupNumber.trim() || null,
-            dateOfBirth: dob || null,
-          },
-        }),
-        minLoading,
-      ])
+      const updated = await checkEligibility.mutateAsync({
+        id: patient.id,
+        insuranceProvider: insuranceProvider.trim() || null,
+        paymentDetails: {
+          memberId: memberId.trim() || null,
+          groupNumber: groupNumber.trim() || null,
+          dateOfBirth: dob || null,
+        },
+      })
       setResult(updated)
       setPhase("result")
     } catch (err: any) {
-      setError(
-        err?.response?.data?.message || "Eligibility check failed. Please try again.",
-      )
+      setError(cleanEligibilityError(err?.response?.data?.message))
       setPhase("error")
     } finally {
       submittingRef.current = false
     }
   }
+
+  const eligible = result?.eligibilityStatus === "eligible"
+  const sandbox = result?.eligibilityDetails?.vob?.sandbox === true
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -143,15 +143,6 @@ export function EligibilityCheckDialog({ patient, open, onClose }: EligibilityCh
         <div className="p-6">
           {phase === "form" && (
             <>
-              <div className="mb-4 flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                <p className="text-xs text-amber-800">
-                  <span className="font-semibold">Demo mode.</span> These are sample
-                  fields. Enter anything to run the check. The result comes back
-                  from the backend.
-                </p>
-              </div>
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="sm:col-span-2">
                   <FieldLabel>Insurance Provider</FieldLabel>
@@ -227,24 +218,42 @@ export function EligibilityCheckDialog({ patient, open, onClose }: EligibilityCh
               </div>
               <p className="text-[11px] text-gray-400 flex items-center gap-1.5">
                 <Loader2 className="w-3 h-3 animate-spin" />
-                This is a simulated loading state for demo purposes
+                This can take up to 20 seconds
               </p>
             </div>
           )}
 
           {phase === "result" && result && (
             <div className="space-y-5">
-              <div className="flex items-start gap-4 rounded-2xl bg-emerald-50 border border-emerald-200 p-5">
-                <div className="w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/30 shrink-0">
-                  <CheckCircle2 className="w-6 h-6" />
+              <div
+                data-testid="eligibility-verdict"
+                className={`flex items-start gap-4 rounded-2xl border p-5 ${
+                  eligible ? "bg-emerald-50 border-emerald-200" : "bg-red-50 border-red-200"
+                }`}
+              >
+                <div
+                  className={`w-12 h-12 rounded-full text-white flex items-center justify-center shadow-lg shrink-0 ${
+                    eligible ? "bg-emerald-600 shadow-emerald-600/30" : "bg-red-600 shadow-red-600/30"
+                  }`}
+                >
+                  {eligible ? <CheckCircle2 className="w-6 h-6" /> : <XCircle className="w-6 h-6" />}
                 </div>
                 <div>
-                  <h4 className="text-lg font-bold text-emerald-900">Patient is Eligible</h4>
-                  <p className="text-sm text-emerald-700 mt-0.5">
-                    Eligibility check completed - coverage verified.
+                  <h4 className={`text-lg font-bold ${eligible ? "text-emerald-900" : "text-red-900"}`}>
+                    {eligible ? "Patient is Eligible" : "Patient is Not Eligible"}
+                  </h4>
+                  <p className={`text-sm mt-0.5 ${eligible ? "text-emerald-700" : "text-red-700"}`}>
+                    {eligible
+                      ? "Eligibility check completed - coverage verified."
+                      : result.eligibilityReason || "The payer did not confirm active coverage."}
                   </p>
+                  {sandbox && (
+                    <p className="text-[11px] text-amber-700 mt-1.5 font-medium">
+                      Sandbox result: test Stedi key, sample payer data (not this patient&apos;s real coverage).
+                    </p>
+                  )}
                   {result.eligibilityCheckedAt && (
-                    <p className="text-[11px] text-emerald-600/80 mt-1.5">
+                    <p className="text-[11px] text-gray-500 mt-1.5">
                       Checked {new Date(result.eligibilityCheckedAt).toLocaleString("en-US", {
                         month: "short",
                         day: "numeric",

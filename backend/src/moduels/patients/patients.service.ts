@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { fetchGrowTherapyEvents, type GrowTherapyEvent } from "@/lib/growTherapyCalendar";
 import { notifyPatientsChanged } from "@/lib/pusher";
 import { isPatientInScope, patientScopeFor } from "@/lib/scope";
+import { checkStediEligibility, type VobSnapshot } from "@/lib/stedi";
 import type { AuthenticatedUser } from "@/lib/types";
 import { emailService } from "@/services/email.service";
 import { combineWebhookDateAndTime, getClinicHour } from "@/utils/clinicTime";
@@ -79,9 +80,10 @@ async function findDuplicateByEmail(email: string | null | undefined): Promise<b
 }
 
 /**
- * Server-side simulated verification of benefits. In a later phase this will
- * call a real payer/clearinghouse API; for now it synthesizes realistic values
- * from the patient's stored payment data so the eligibility flow can be tested.
+ * Fallback verification of benefits used only when STEDI_API_KEY is not
+ * configured (local/dev environments without a Stedi account). Synthesizes
+ * realistic values from the patient's stored payment data so the eligibility
+ * flow still works end-to-end without a live payer connection.
  */
 function simulateVobSnapshot(
 	patient: { id: string; insuranceProvider: string | null },
@@ -106,6 +108,7 @@ function simulateVobSnapshot(
 			day: "numeric",
 			year: "numeric",
 		}),
+		_simulated: true,
 	};
 }
 
@@ -2103,9 +2106,82 @@ export const patientsService = {
 		}
 
 		// 2. Build the profile used to evaluate the rules: stored payment fields +
-		//    the simulated VOB snapshot.
-		const vob = simulateVobSnapshot(patient, { insuranceProvider: latest.insuranceProvider });
+		//    a VOB snapshot. Calls the real Stedi eligibility API when
+		//    STEDI_API_KEY is configured; falls back to a simulated snapshot
+		//    otherwise (e.g. local/dev without a Stedi account).
 		const storedDetails = (latest.paymentDetails ?? {}) as Record<string, unknown>;
+		let vob: VobSnapshot | ReturnType<typeof simulateVobSnapshot>;
+		let stediErrors: string[] = [];
+
+		if (process.env.STEDI_API_KEY) {
+			const memberId = typeof storedDetails.memberId === "string" ? storedDetails.memberId.trim() : "";
+			const groupNumber = typeof storedDetails.groupNumber === "string" ? storedDetails.groupNumber.trim() : undefined;
+			const dateOfBirth =
+				typeof storedDetails.dateOfBirth === "string" && storedDetails.dateOfBirth.trim()
+					? storedDetails.dateOfBirth.trim()
+					: patient.dateOfBirth
+						? patient.dateOfBirth.toISOString().slice(0, 10)
+						: undefined;
+
+			if (!latest.insuranceProvider) {
+				return ServiceResponse.failure(
+					"Insurance provider is required to run an eligibility check with the payer.",
+					null,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+			// Member ID is required for a LIVE payer call; a sandbox/test Stedi key
+			// ignores it and substitutes a fixed mock identity (see stedi.ts), so
+			// this check only blocks the real-payer path.
+			if (!memberId && !process.env.STEDI_API_KEY?.startsWith("test_")) {
+				return ServiceResponse.failure(
+					"Member ID is required to run a real eligibility check with the payer.",
+					null,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+
+			if (!dateOfBirth && !process.env.STEDI_API_KEY?.startsWith("test_")) {
+				return ServiceResponse.failure(
+					"Date of birth is required to run a real eligibility check with the payer.",
+					null,
+					StatusCodes.BAD_REQUEST,
+				);
+			}
+
+			try {
+				const result = await checkStediEligibility({
+					insuranceProvider: latest.insuranceProvider,
+					memberId,
+					firstName: patient.firstName,
+					lastName: patient.lastName ?? "",
+					dateOfBirth,
+					groupNumber,
+				});
+				vob = result.vob;
+				stediErrors = result.errors;
+			} catch (err) {
+				logger.error({ err, patientId: id }, "Stedi eligibility check failed");
+				return ServiceResponse.failure(
+					err instanceof Error
+						? `Eligibility check failed: ${err.message}`
+						: "Eligibility check failed while contacting the payer.",
+					null,
+					StatusCodes.BAD_GATEWAY,
+				);
+			}
+		} else if (process.env.NODE_ENV === "production") {
+			// Never fabricate coverage data for real patients.
+			logger.error({ patientId: id }, "Eligibility check attempted in production without STEDI_API_KEY");
+			return ServiceResponse.failure(
+				"Eligibility verification is not configured. Please contact an administrator.",
+				null,
+				StatusCodes.SERVICE_UNAVAILABLE,
+			);
+		} else {
+			vob = simulateVobSnapshot(patient, { insuranceProvider: latest.insuranceProvider });
+		}
+
 		const profile: Record<string, unknown> = {
 			paymentMethod: latest.paymentMethod ?? "",
 			insuranceProvider: latest.insuranceProvider ?? "",
@@ -2126,9 +2202,20 @@ export const patientsService = {
 			}
 		}
 
-		const isEligible = rules.length === 0 ? true : failed.length === 0;
+		// The payer's own coverage determination takes priority over local rules
+		// — a payer-confirmed "Inactive"/"Error" coverage is never overridden by
+		// an eligibility rule passing. Local rules only apply additional
+		// constraints on top of an active (or simulated) coverage result.
+		const payerRejected = "coverage" in vob && vob.coverage !== "Active";
+		const rulesPassed = rules.length === 0 ? true : failed.length === 0;
+		const isEligible = !payerRejected && rulesPassed;
 		const status = isEligible ? "eligible" : "not_eligible";
-		const reason = failed.length > 0 ? `Failed: ${failed.join("; ")}` : null;
+
+		const reasonParts: string[] = [];
+		if (payerRejected) reasonParts.push(`Payer reports coverage: ${(vob as VobSnapshot).coverage}`);
+		if (stediErrors.length > 0) reasonParts.push(...stediErrors);
+		if (failed.length > 0) reasonParts.push(`Failed: ${failed.join("; ")}`);
+		const reason = reasonParts.length > 0 ? reasonParts.join("; ") : null;
 
 		// 4. Persist the result.
 		const updated = await prisma.patient.update({
@@ -2136,7 +2223,7 @@ export const patientsService = {
 			data: {
 				eligibilityStatus: status,
 				eligibilityCheckedAt: new Date(),
-				eligibilityDetails: { vob, evaluatedRules: rules.length },
+				eligibilityDetails: JSON.parse(JSON.stringify({ vob, evaluatedRules: rules.length })),
 				eligibilityReason: reason,
 				updatedAt: new Date(),
 				updatedById: user.id,
