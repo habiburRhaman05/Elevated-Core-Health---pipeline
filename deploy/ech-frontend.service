@@ -1,0 +1,26 @@
+[Unit]
+Description=ECH Pipeline Portal Frontend (Next.js)
+After=network.target ech-backend.service
+
+[Service]
+Type=simple
+User=ech
+Group=ech
+WorkingDirectory=/opt/ech-pipeline/web-dashboard
+EnvironmentFile=/opt/ech-pipeline/web-dashboard/.env.production
+ExecStart=/usr/bin/node .next/standalone/server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ech-frontend
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ech-pipeline/web-dashboard
+
+[Install]
+WantedBy=multi-user.target

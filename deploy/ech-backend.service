@@ -1,0 +1,25 @@
+[Unit]
+Description=ECH Pipeline Portal Backend (Express)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ech
+Group=ech
+WorkingDirectory=/opt/ech-pipeline/backend
+EnvironmentFile=/opt/ech-pipeline/backend/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ech-backend
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ech-pipeline/backend
+
+[Install]
+WantedBy=multi-user.target
